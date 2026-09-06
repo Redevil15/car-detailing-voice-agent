@@ -1,0 +1,24 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# Secretos y config local
+.env
+.env.*
+!.env.example
+
+# Base de datos mock (SQLite)
+*.db
+*.sqlite3
+
+# Artefactos de audio y modelos de voz
+*.wav
+*.mp3
+models/
