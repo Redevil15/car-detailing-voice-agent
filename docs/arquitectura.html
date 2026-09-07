@@ -1,0 +1,311 @@
+<title>Arquitectura del agente de voz</title>
+<!--
+  Diagramas de arquitectura del proyecto car-detailing-voice-agent.
+  Editar SOLO los bloques DATA (NODES / EDGES / BOUNDS) de cada diagrama.
+  Se actualiza al cerrar cada fase. Publicar con la herramienta Artifact.
+-->
+<style>
+  :root {
+    --bg:#fbfbfa; --surface:#fff; --surface-2:#f4f4f2;
+    --ink:#1c1c1a; --ink-muted:#6b6b66;
+    --line:#d6d5d0; --edge:#8a8983;
+    --role-client:#4a6fd4; --role-edge:#7a5cc4; --role-compute:#2f8f6b;
+    --role-data:#b8763a; --role-external:#6b6b66; --role-async:#c0517a;
+    --role-wash:10%;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg:#17171a; --surface:#202024; --surface-2:#26262b;
+      --ink:#ececea; --ink-muted:#9c9c98;
+      --line:#3a3a40; --edge:#6e6e78;
+      --role-client:#7f9bf0; --role-edge:#a78ce8; --role-compute:#4fbf95;
+      --role-data:#dc9a5c; --role-external:#9c9c98; --role-async:#e884aa;
+      --role-wash:18%;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg:#17171a; --surface:#202024; --surface-2:#26262b;
+    --ink:#ececea; --ink-muted:#9c9c98;
+    --line:#3a3a40; --edge:#6e6e78;
+    --role-client:#7f9bf0; --role-edge:#a78ce8; --role-compute:#4fbf95;
+    --role-data:#dc9a5c; --role-external:#9c9c98; --role-async:#e884aa;
+    --role-wash:18%;
+  }
+
+  body {
+    background:var(--bg); color:var(--ink);
+    font:14px/1.55 ui-sans-serif,-apple-system,"Segoe UI",Roboto,sans-serif;
+  }
+  .wrap { max-width:1280px; margin:0 auto; padding:36px 24px 64px; }
+
+  header { max-width:62ch; margin-bottom:38px; }
+  h1 { font-size:19px; font-weight:600; margin:0 0 6px; letter-spacing:-.01em; text-wrap:balance; }
+  header p { font-size:13.5px; color:var(--ink-muted); margin:0; }
+
+  section { margin-bottom:46px; }
+  h2 { font-size:15px; font-weight:600; margin:0 0 3px; }
+  .claim { font-size:13px; color:var(--ink-muted); margin:0 0 20px; max-width:74ch; }
+
+  .stage { overflow-x:auto; padding-bottom:4px; }
+  svg { height:auto; display:block; font-family:inherit; }
+
+  .bound rect { fill:var(--surface-2); stroke:var(--line); stroke-width:1.5;
+                stroke-dasharray:6 5; opacity:.62; }
+  .bound .chip { fill:var(--bg); stroke:none; opacity:1; stroke-dasharray:none; }
+  .bound text { font-size:10px; font-weight:600; letter-spacing:.05em; fill:var(--ink-muted); }
+
+  .node rect.body { fill:color-mix(in srgb, var(--role) var(--role-wash), var(--surface));
+                    stroke:var(--role); stroke-width:1.5;
+                    filter:drop-shadow(0 1px 2px rgb(0 0 0 / .06)); }
+  .node.ext rect.body { stroke-dasharray:5 4; }
+  .node .t { font-size:13px; font-weight:600; fill:var(--ink); }
+  .node .s { font-size:11px; font-weight:450; fill:var(--ink-muted); }
+
+  .edge path { fill:none; stroke:var(--edge); stroke-width:1.5; stroke-linecap:round; }
+  .edge.alt path { stroke-dasharray:5 4; }
+  .elabel { font-size:10px; font-weight:500; fill:var(--ink-muted); }
+  .elabel-bg { fill:var(--bg); }
+
+  .legend { display:flex; flex-wrap:wrap; gap:8px 22px; margin-top:14px;
+            font-size:11px; color:var(--ink-muted); }
+  .legend span { display:inline-flex; align-items:center; gap:7px; }
+  .sw { width:15px; height:11px; border-radius:3px; border:1.5px solid var(--k);
+        background:color-mix(in srgb, var(--k) var(--role-wash), var(--surface)); }
+  .sw.dash { border-style:dashed; }
+  .swline { width:20px; height:0; border-top:1.5px dashed var(--edge); }
+
+  .status { margin-top:8px; border-top:1px solid var(--line); padding-top:22px; }
+  .status h2 { margin-bottom:14px; }
+  .phases { list-style:none; margin:0; padding:0; display:grid; gap:1px;
+            background:var(--line); border:1px solid var(--line); border-radius:9px;
+            overflow:hidden; max-width:760px; }
+  .phases li { background:var(--surface); display:grid;
+               grid-template-columns:22px 82px 1fr; gap:12px; align-items:baseline;
+               padding:10px 14px; font-size:12.5px; }
+  .phases .mark { font-size:12px; color:var(--ink-muted); }
+  .phases .done .mark { color:var(--role-compute); font-weight:600; }
+  .phases .ph { font-weight:600; font-size:12px; }
+  .phases .done .ph { color:var(--ink); }
+  .phases li:not(.done) .ph, .phases li:not(.done) .what { color:var(--ink-muted); }
+  .what code { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:11.5px; }
+
+  footer { margin-top:34px; font-size:11.5px; color:var(--ink-muted); max-width:74ch; }
+  footer code { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
+</style>
+
+<div class="wrap">
+  <header>
+    <h1>Arquitectura del agente de voz para car detailing</h1>
+    <p>Un agente conversacional telefónico que consulta precios, revisa la agenda y
+       reserva servicios, construido sobre MCP y LangGraph con despliegue dual.</p>
+  </header>
+
+  <section>
+    <h2>1 · Ruta de una llamada</h2>
+    <p class="claim">El agente nunca toca la base de datos. Habla el protocolo MCP por HTTP
+       contra un proceso separado, así que las herramientas del negocio sirven igual al agente
+       de voz que a cualquier otro cliente MCP.</p>
+    <div class="stage"><svg id="svg1" role="img" aria-label="Diagrama de contenedores: cliente, API de voz, agente LangGraph, servidor MCP y SQLite"></svg></div>
+  </section>
+
+  <section>
+    <h2>2 · Despliegue dual y los dos switches</h2>
+    <p class="claim">Dónde corre la app y qué proveedor de voz usa son decisiones independientes:
+       la misma imagen Docker sirve en AWS y en el homelab, y cualquiera de las dos puede usar
+       cualquiera de los dos proveedores de voz.</p>
+    <div class="stage"><svg id="svg2" role="img" aria-label="Diagrama de despliegue: AWS con Route 53 y ECS Fargate, homelab con Cloudflare Tunnel y Docker en WSL2, y los dos proveedores de voz"></svg></div>
+    <div class="legend">
+      <span><i class="sw" style="--k:var(--role-client)"></i>cliente</span>
+      <span><i class="sw" style="--k:var(--role-edge)"></i>borde / entrada</span>
+      <span><i class="sw" style="--k:var(--role-compute)"></i>cómputo propio</span>
+      <span><i class="sw" style="--k:var(--role-data)"></i>datos</span>
+      <span><i class="sw dash" style="--k:var(--role-external)"></i>servicio externo</span>
+      <span><i class="swline"></i>combinación posible, no la típica</span>
+    </div>
+  </section>
+
+  <section class="status">
+    <h2>Estado por fase</h2>
+    <ol class="phases">
+      <li class="done"><span class="mark">✓</span><span class="ph">Fase 0</span>
+        <span class="what">Entorno con <code>uv</code>, Python 3.12 fijado, grafo de 2 nodos</span></li>
+      <li class="done"><span class="mark">✓</span><span class="ph">Fase 1</span>
+        <span class="what">Servidor MCP sobre Streamable HTTP con las 3 tools y el mock SQLite</span></li>
+      <li><span class="mark">○</span><span class="ph">Fase 2</span>
+        <span class="what">Grafo real: interpretar, decidir tool, clarificar, responder</span></li>
+      <li><span class="mark">○</span><span class="ph">Fase 3</span>
+        <span class="what"><code>VoiceProvider</code> con implementación de nube y local</span></li>
+      <li><span class="mark">○</span><span class="ph">Fase 4</span>
+        <span class="what">Imagen única desplegada en ECS Fargate y en el homelab</span></li>
+      <li><span class="mark">○</span><span class="ph">Fase 5</span>
+        <span class="what">Tracing con Langfuse, costo por turno y métricas de evaluación</span></li>
+    </ol>
+  </section>
+
+  <footer>
+    Generado a partir del repositorio <code>car-detailing-voice-agent</code>, estado al cierre de
+    Fase 1 (6 de septiembre de 2026). Las cajas con fase futura no son especulación: cada una
+    corresponde a una decisión ya registrada en <code>docs/decision-log.md</code>. Todos los datos
+    del sistema son sintéticos.
+  </footer>
+</div>
+
+<script>
+/* =============================== DATA — diagrama 1 =============================== */
+const D1_NODES = [
+  { id:'cliente', label:'Cliente',          sub:'llamada de voz',       role:'client',  col:0, row:0 },
+  { id:'api',     label:'API de voz',       sub:'FastAPI · Fase 3',     role:'edge',    col:1, row:0 },
+  { id:'agente',  label:'Agente LangGraph', sub:'grafo con estado · F2',role:'compute', col:2, row:0 },
+  { id:'mcp',     label:'Servidor MCP',     sub:'Streamable HTTP :8000',role:'compute', col:3, row:0 },
+  { id:'db',      label:'SQLite',           sub:'detailing.db · mock',  role:'data',    col:4, row:0 },
+  { id:'voz',     label:'VoiceProvider',    sub:'Strategy · Fase 3',    role:'compute', col:1, row:1 },
+  { id:'llm',     label:'Groq · LLM',       sub:'tool calling · Fase 2',role:'external',col:2, row:1, ext:true },
+];
+const D1_EDGES = [
+  { id:'d1e1', from:'cliente', to:'api',    label:'audio · HTTP' },
+  { id:'d1e2', from:'api',     to:'voz',    label:'transcribe / synthesize' },
+  { id:'d1e3', from:'api',     to:'agente', label:'texto del turno' },
+  { id:'d1e4', from:'agente',  to:'llm',    label:'HTTPS · tool calling' },
+  { id:'d1e5', from:'agente',  to:'mcp',    label:'MCP · tools/call' },
+  { id:'d1e6', from:'mcp',     to:'db',     label:'SQL' },
+];
+const D1_BOUNDS = [
+  { id:'d1b1', label:'PROCESO APARTE', nodes:['mcp','db'] },
+];
+
+/* =============================== DATA — diagrama 2 =============================== */
+const D2_NODES = [
+  { id:'caller',  label:'Cliente',           sub:'HTTPS',                 role:'client',  col:0, row:1 },
+  { id:'r53',     label:'Route 53 + ALB',    sub:'api-aws.dominio',       role:'edge',    col:1, row:0 },
+  { id:'tunnel',  label:'Cloudflare Tunnel', sub:'sin abrir puertos',     role:'edge',    col:1, row:2 },
+  { id:'fargate', label:'ECS Fargate',       sub:'misma imagen · Fase 4', role:'compute', col:2, row:0 },
+  { id:'wsl',     label:'Docker en WSL2',    sub:'7900XTX · Fase 4',      role:'compute', col:2, row:2 },
+  { id:'nube',    label:'Azure Speech / Groq',sub:'VOICE_PROVIDER=cloud', role:'external',col:3, row:0, ext:true },
+  { id:'local',   label:'Whisper + Piper',   sub:'VOICE_PROVIDER=local',  role:'compute', col:3, row:2 },
+];
+const D2_EDGES = [
+  { id:'d2e1', from:'caller',  to:'r53',    label:'api-aws.dominio' },
+  { id:'d2e2', from:'caller',  to:'tunnel', label:'api-local.dominio' },
+  { id:'d2e3', from:'r53',     to:'fargate',label:'HTTP' },
+  { id:'d2e4', from:'tunnel',  to:'wsl',    label:'túnel ya abierto' },
+  { id:'d2e5', from:'fargate', to:'nube',   label:'STT + TTS' },
+  { id:'d2e6', from:'wsl',     to:'local',  label:'STT + TTS en GPU' },
+  { id:'d2e7', from:'fargate', to:'local',  label:'switch B', alt:true },
+  { id:'d2e8', from:'wsl',     to:'nube',   label:'switch B', alt:true },
+];
+const D2_BOUNDS = [
+  { id:'d2b1', label:'AWS',     nodes:['r53','fargate'] },
+  { id:'d2b2', label:'HOMELAB', nodes:['tunnel','wsl'] },
+];
+/* ============================ FIN DATA — genérico debajo ========================= */
+
+const W = 190, H = 76, R = 10;
+const COL = { gap: 96, x0: 56 }, ROW = { gap: 44, y0: 52 }, PAD_B = 40;
+
+const S = s => String(s).replace(/[&<>]/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;' }[c]));
+const fit = (t, px) => (t.length * px <= W - 30 ? t : t.slice(0, Math.floor((W - 30) / px) - 1) + '…');
+
+function drawDiagram(svg, NODES, EDGES, BOUNDS) {
+  const byId = Object.fromEntries(NODES.map(n => [n.id, n]));
+  const cx = n => COL.x0 + n.col * (W + COL.gap);
+  const cy = n => ROW.y0 + n.row * (H + ROW.gap);
+
+  function anchors(a, b) {
+    const ax = cx(a), ay = cy(a) + H / 2, bx = cx(b), by = cy(b) + H / 2;
+    if (b.col > a.col) return { x1: ax + W, y1: ay, x2: bx, y2: by };
+    if (b.col < a.col) return { x1: ax, y1: ay, x2: bx + W, y2: by };
+    return { x1: ax + W / 2, y1: ay + (b.row > a.row ? H / 2 : -H / 2),
+             x2: bx + W / 2, y2: by + (b.row > a.row ? -H / 2 : H / 2), vert: true };
+  }
+
+  // Salir en horizontal, girar una vez en el canal, llegar en horizontal.
+  function elbow(p, off) {
+    const { x1, y1, x2, y2 } = p;
+    if (p.vert) return `M${x1} ${y1} V${y2}`;
+    if (Math.abs(y1 - y2) < 1) return `M${x1} ${y1} H${x2}`;
+    const mx = (x1 + x2) / 2 + off, s = y2 > y1 ? 1 : -1, dir = x2 > x1 ? 1 : -1;
+    return `M${x1} ${y1} H${mx - R * dir} Q${mx} ${y1} ${mx} ${y1 + s * R}` +
+           ` V${y2 - s * R} Q${mx} ${y2} ${mx + R * dir} ${y2} H${x2}`;
+  }
+
+  function midpoint(d) {
+    const p = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    p.setAttribute('d', d);
+    p.setAttribute('visibility', 'hidden');
+    svg.appendChild(p);
+    const pt = p.getPointAtLength(p.getTotalLength() * 0.5);
+    p.remove();
+    return pt;
+  }
+
+  const maxCol = Math.max(...NODES.map(n => n.col));
+  const maxRow = Math.max(...NODES.map(n => n.row));
+  const w = COL.x0 * 2 + (maxCol + 1) * W + maxCol * COL.gap;
+  const h = ROW.y0 + (maxRow + 1) * H + maxRow * ROW.gap + PAD_B;
+  svg.setAttribute('viewBox', `0 0 ${w} ${h}`);
+  svg.style.width = w + 'px';
+  svg.style.maxWidth = '100%';
+  // Por debajo de este ancho el texto de 13px bajaría de los 10px legibles:
+  // mejor que el contenedor haga scroll horizontal a que el diagrama encoja.
+  svg.style.minWidth = Math.min(w, 1200) + 'px';
+
+  // Las fronteras se pintan primero para que todo lo demás quede encima.
+  const boundSvg = (BOUNDS || []).map(bd => {
+    const ns = bd.nodes.map(id => byId[id]);
+    const x = Math.min(...ns.map(cx)) - 24;
+    const x2 = Math.max(...ns.map(n => cx(n) + W)) + 24;
+    const yT = Math.min(...ns.map(cy)) - 34;
+    const y2 = Math.max(...ns.map(n => cy(n) + H)) + 24;
+    return `<g class="bound">
+      <rect x="${x}" y="${yT}" width="${x2 - x}" height="${y2 - yT}" rx="14"/>
+      <rect class="chip" x="${x + 10}" y="${yT - 8}" width="${bd.label.length * 6.6 + 14}" height="16" rx="4"/>
+      <text x="${x + 18}" y="${yT + 3.5}">${S(bd.label)}</text></g>`;
+  }).join('');
+
+  // Separar las aristas que comparten canal para que sus tramos verticales no se
+  // solapen. Solo cuentan las que realmente giran: una arista recta no ocupa canal,
+  // y contarla empujaría a las siguientes contra el borde del nodo de destino.
+  const seen = {};
+  const edgeSvg = EDGES.map(e => {
+    const a = byId[e.from], b = byId[e.to];
+    let off = 0;
+    if (Math.abs(cy(a) - cy(b)) > 1 && a.col !== b.col) {
+      const k = `${Math.min(a.col, b.col)}-${Math.max(a.col, b.col)}`;
+      seen[k] = (seen[k] ?? -1) + 1;
+      off = seen[k] * 22 - 11;
+    }
+    const d = elbow(anchors(a, b), off);
+    const m = midpoint(d);
+    return `<g class="edge${e.alt ? ' alt' : ''}">
+      <path d="${d}" marker-end="url(#arrow-${svg.id})"/>
+      <text class="elabel" x="${m.x}" y="${m.y + 3.5}" text-anchor="middle">${S(e.label)}</text>
+    </g>`;
+  }).join('');
+
+  const nodeSvg = NODES.map(n => `<g class="node${n.ext ? ' ext' : ''}" style="--role:var(--role-${n.role})">
+      <rect class="body" x="${cx(n)}" y="${cy(n)}" width="${W}" height="${H}" rx="${R}"/>
+      <text class="t" x="${cx(n) + W / 2}" y="${cy(n) + H / 2 - 2}" text-anchor="middle">${S(fit(n.label, 7.3))}</text>
+      <text class="s" x="${cx(n) + W / 2}" y="${cy(n) + H / 2 + 15}" text-anchor="middle">${S(fit(n.sub, 6.2))}</text>
+    </g>`).join('');
+
+  svg.innerHTML = `<defs>
+      <marker id="arrow-${svg.id}" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6"
+              orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--edge)"/></marker>
+    </defs>${boundSvg}${edgeSvg}${nodeSvg}`;
+
+  // Segunda pasada: métricas reales del texto para la pastilla que hace legible
+  // la etiqueta cuando cruza el relleno de una frontera.
+  svg.querySelectorAll('.elabel').forEach(t => {
+    const b = t.getBBox();
+    const r = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+    r.setAttribute('class', 'elabel-bg');
+    r.setAttribute('x', b.x - 5); r.setAttribute('y', b.y - 2);
+    r.setAttribute('width', b.width + 10); r.setAttribute('height', b.height + 4);
+    r.setAttribute('rx', 4);
+    t.parentNode.insertBefore(r, t);
+  });
+}
+
+drawDiagram(document.getElementById('svg1'), D1_NODES, D1_EDGES, D1_BOUNDS);
+drawDiagram(document.getElementById('svg2'), D2_NODES, D2_EDGES, D2_BOUNDS);
+</script>
