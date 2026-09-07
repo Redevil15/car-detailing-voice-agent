@@ -128,3 +128,80 @@ repo demuestra la versión vigente del protocolo.
 "¿Cuánto cuesta agendar el sábado?" se clasifica como `consultar_precio`
 porque "cuesta" aparece antes en el diccionario. Ese caso queda como
 línea base para comparar contra el clasificador LLM de Fase 2.
+
+---
+
+## ADR-007 — SQLite como almacén del mock de negocio
+
+**Fecha:** 2026-09-06 · **Estado:** aceptada
+
+**Contexto.** El agente necesita consultar precios, disponibilidad y crear
+citas. La plataforma real del negocio existe, pero integrarse con ella no
+es el objetivo de este proyecto ni se usarán datos reales de clientes.
+
+**Decisión.** SQLite embebido, con toda la BD detrás de `db/conexion.py` y
+`tools.py`.
+
+**Alternativas descartadas.**
+- PostgreSQL: requiere servicio, credenciales y un contenedor extra antes de
+  poder probar una tool. El volumen (7 servicios, ~125 franjas) no lo
+  justifica.
+- Datos en memoria / diccionarios Python: no permitiría demostrar
+  transacciones ni el control de concurrencia de `registrar_servicio`.
+
+**Consecuencias.**
+- Costo de las rarezas de SQLite: sin tipo fecha (ISO 8601 en TEXT), sin
+  booleano (INTEGER + CHECK), claves foráneas desactivadas por defecto.
+- **Persistencia asimétrica en el despliegue dual (Fase 4):** el sistema de
+  archivos de ECS Fargate es efímero, así que las citas creadas en AWS se
+  pierden al reiniciar la tarea; en el homelab persisten vía volumen Docker.
+  Se decidirá en Fase 4 entre documentarlo como demo sin estado, montar EFS,
+  o migrar solo AWS a Postgres.
+
+---
+
+## ADR-008 — Sin base de datos vectorial
+
+**Fecha:** 2026-09-06 · **Estado:** aceptada
+
+**Contexto.** El plan mencionaba Qdrant Cloud como posible vector store.
+
+**Decisión.** No incorporar búsqueda vectorial en el alcance actual.
+
+**Alternativas descartadas.**
+- Qdrant / pgvector para emparejar el nombre de servicio dicho por el cliente
+  contra el catálogo: sobredimensionado para 7 elementos, y sustituye una
+  búsqueda exacta por una aproximada en datos (precios, cupos) donde la
+  exactitud es un requisito.
+
+**Consecuencias.** El emparejamiento difuso de nombres de servicio queda a
+cargo del LLM de Fase 2, que recibe el catálogo completo en el prompt.
+Se reconsideraría solo si el negocio aportara un corpus no estructurado
+(garantías, manuales, FAQ) sobre el que responder preguntas abiertas.
+
+---
+
+## ADR-009 — WSL2 sobre Windows para el homelab (en vez de dual boot)
+
+**Fecha:** 2026-09-06 · **Estado:** propuesta (se confirma en Fase 4)
+
+**Contexto.** El nodo del homelab es una PC con 7900XTX que sigue en uso
+como máquina de gaming. ROCm requiere Linux. El nodo debe servir tráfico
+público de forma continua vía Cloudflare Tunnel.
+
+**Decisión.** Ubuntu 24.04 LTS sobre WSL2, conservando Windows como sistema
+principal.
+
+**Alternativas descartadas.**
+- Dual boot: solo un sistema arranca a la vez, así que el servidor estaría
+  caído durante cada sesión de gaming. Descalifica la opción por sí solo.
+- Ubuntu Server nativo dedicado: mejor soporte de ROCm, pero implica perder
+  la máquina como PC de gaming.
+
+**Consecuencias.**
+- El túnel no se ve afectado por el NAT de WSL2: `cloudflared` establece una
+  conexión SALIENTE, así que no hay port forwarding que atravesar.
+- Riesgos a vigilar: WSL2 se detiene al suspender Windows (ajustar energía y
+  autoarranque), y ROCm sobre WSL2 soporta un subconjunto de features.
+- Plan B si ROCm sobre WSL2 no rinde en Fase 3: mantener LocalVoiceProvider
+  sobre CPU y documentar la medición, en vez de reinstalar el sistema.
