@@ -48,7 +48,7 @@ Docker · Langfuse · AWS ECS Fargate · Cloudflare Tunnel
 ## Estado
 
 - [x] **Fase 0** — Fundamentos y entorno
-- [ ] **Fase 1** — Servidor MCP con las herramientas del negocio
+- [x] **Fase 1** — Servidor MCP con las herramientas del negocio
 - [ ] **Fase 2** — Orquestador LangGraph
 - [ ] **Fase 3** — Capa de voz con switch local/nube
 - [ ] **Fase 4** — Despliegue dual (AWS + homelab)
