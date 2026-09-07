@@ -69,3 +69,7 @@ Cada decisión técnica, con sus alternativas descartadas y por qué, está en
 
 Todos los datos de este repositorio son sintéticos. No se usa información
 real de clientes del negocio.
+
+## Diagramas
+
+Diagramas interactivos de contenedores y despliegue: [docs/arquitectura.html](docs/arquitectura.html)
