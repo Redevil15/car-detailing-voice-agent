@@ -32,6 +32,7 @@ class Ajustes:
     llm_api_key: str
     llm_model: str
     llm_model_respaldo: str  # opcional: entra si el principal falla
+    llm_reasoning_effort: str  # vacío = no se envía; 'none' apaga el razonamiento oculto
     groq_api_key: str  # sin uso por ahora: Groq quedó fuera (ADR-010)
     whisper_modelo_dir: Path  # carpeta con el model.bin de faster-whisper
     piper_voz: Path  # archivo .onnx de la voz de Piper
@@ -99,6 +100,7 @@ def obtener_ajustes() -> Ajustes:
         llm_api_key=_leer("LLM_API_KEY"),
         llm_model=_leer("LLM_MODEL"),
         llm_model_respaldo=_leer("LLM_MODEL_RESPALDO"),
+        llm_reasoning_effort=_leer("LLM_REASONING_EFFORT"),
         groq_api_key=_leer("GROQ_API_KEY"),
         whisper_modelo_dir=_ruta("WHISPER_MODEL_DIR", "models/whisper-small"),
         piper_voz=_ruta("PIPER_VOICE", "models/piper/es_MX-claude-high.onnx"),

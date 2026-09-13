@@ -130,6 +130,19 @@ def no_menciona(*prohibidas: str) -> Verificacion:
     return verificar
 
 
+# Formas típicas de tuteo. Es una heurística para detectar regresiones, no un
+# analizador gramatical: puede equivocarse con frases poco comunes.
+TUTEO = (" tienes", " quieres", " te gustaría", " puedes", " tu ", "¿tienes", "¿quieres", "¿te ")
+
+
+def usa_usted() -> Verificacion:
+    def verificar(r: ResultadoTurno):
+        texto = f" {r.respuesta.lower()} "
+        encontrado = [t.strip() for t in TUTEO if t in texto]
+        return f"tutea al cliente: {encontrado}" if encontrado else None
+    return verificar
+
+
 def todas(*verificaciones: Verificacion) -> Verificacion:
     def verificar(r: ResultadoTurno):
         for v in verificaciones:
@@ -198,7 +211,13 @@ def construir_escenarios() -> list[Escenario]:
         ]),
         Escenario("Catálogo: la pregunta que antes fallaba", [
             ("¿Qué servicios tienen?",
-             todas(llamo("listar_servicios"), no_menciona("no lo manejamos"))),
+             todas(
+                 llamo("listar_servicios"),
+                 no_menciona("no lo manejamos"),
+                 # Debe dar contenido útil: al menos un servicio por su nombre.
+                 menciona("lavado", "encerado", "pulido", "interiores", "cerámico", "descontaminación"),
+                 usa_usted(),
+             )),
         ]),
         Escenario("Ambigüedad: 'el lavado', resuelta con memoria", [
             ("¿Cuánto sale el lavado?", termina_en("clarificar")),
@@ -214,8 +233,11 @@ def construir_escenarios() -> list[Escenario]:
         ]),
         Escenario("Agendar de punta a punta", [
             (f"Quiero agendar un encerado para {en_palabras(dia_cita)} a las once de la mañana",
-             no_llamo("registrar_servicio")),
-            ("Me llamo Ramona Pérez y mi teléfono es 55 1234 5678", None),
+             todas(no_llamo("registrar_servicio"), usa_usted())),
+            # Debe APROVECHAR los datos recién dados (nombrar a la clienta) en vez
+            # de volver a pedirlos, que es lo que hizo qwen3.5:2b la primera vez.
+            ("Me llamo Ramona Pérez y mi teléfono es 55 1234 5678",
+             todas(menciona("ramona"), usa_usted())),
             # Si el agente ya agendó en el turno anterior, este "sí" es la
             # trampa clásica: una tool NO idempotente llamada dos veces.
             ("Sí, así está bien", None),

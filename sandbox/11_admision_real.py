@@ -13,6 +13,7 @@ Las tools no se ejecutan: solo se inspecciona lo que el modelo PROPONE.
     uv run sandbox/11_admision_real.py
 """
 
+import sys
 import time
 from datetime import date
 
@@ -23,7 +24,11 @@ from langchain_openai import ChatOpenAI
 from core.settings import obtener_ajustes
 from mcp_server.tools import checar_disponibilidad, consultar_precio, registrar_servicio
 
-CANDIDATOS = [
+# Los modelos a evaluar se pueden pasar como argumentos; sin argumentos se usa
+# la lista original de OpenRouter. Ejemplo con Ollama:
+#   LLM_BASE_URL=http://127.0.0.1:11434/v1 LLM_API_KEY=ollama-local-sin-clave \
+#     uv run sandbox/11_admision_real.py lfm2.5:8b qwen3.5:2b
+CANDIDATOS = sys.argv[1:] or [
     "liquid/lfm-2.5-2.6b:free",
     "dots-studio/dots-3-note-preview:free",
     "nvidia/nemotron-3.5-lightning:free",

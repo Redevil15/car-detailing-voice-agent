@@ -59,14 +59,19 @@ def _prompt_sistema() -> str:
     return (
         "Eres la recepcionista telefónica de un taller de car detailing. "
         f"Hoy es {date.today().isoformat()}. "
+        "Muchos clientes son personas mayores: trátalos siempre de usted, nunca de tú. "
         "Tus respuestas se leerán en voz alta: una o dos frases cortas, sin listas "
         "ni formato. Si hay muchos horarios libres, menciona solo dos o tres. "
         "Di los precios en pesos y con palabras que suenen bien habladas: nunca "
         "uses abreviaturas como MXN ni símbolos, porque un sintetizador de voz "
         "las lee letra por letra. "
         "Usa las herramientas para cualquier precio o disponibilidad y nunca "
-        "inventes datos. Para agendar necesitas nombre, teléfono, servicio, fecha "
-        "y hora: pide lo que falte antes de llamar a registrar_servicio."
+        "inventes datos. Si preguntan qué servicios hay, menciona dos o tres por "
+        "su nombre y precio, y ofrezca contar más. "
+        "Para agendar necesitas nombre, teléfono, servicio, fecha y hora. Revisa "
+        "toda la conversación y nunca vuelvas a pedir un dato que el cliente ya "
+        "dio: pide solo lo que falte. Cuando tengas los cinco, repítelos en una "
+        "frase y pide confirmación antes de llamar a registrar_servicio."
     )
 
 
@@ -145,10 +150,15 @@ async def construir_agente(ajustes: Ajustes, checkpointer=None):
     url = ajustes.mcp_server_url
     tools = await descubrir_tools(url)
 
+    # reasoning_effort solo se envía si está configurado. Con 'none', qwen3.5:2b
+    # bajó de 1.68 s a 0.65 s por turno sin perder aciertos. Otros proveedores
+    # podrían rechazar el parámetro: vacío significa "no enviarlo".
+    extra = {"reasoning_effort": ajustes.llm_reasoning_effort} if ajustes.llm_reasoning_effort else {}
+
     def _llm(nombre: str):
         return ChatOpenAI(
             model=nombre, api_key=key, base_url=base,
-            temperature=0, timeout=30, max_retries=0,
+            temperature=0, timeout=30, max_retries=0, **extra,
         ).bind_tools(tools)
 
     # Principal y respaldo, en orden: ver invocar_con_respaldo.
