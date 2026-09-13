@@ -205,3 +205,50 @@ principal.
   autoarranque), y ROCm sobre WSL2 soporta un subconjunto de features.
 - Plan B si ROCm sobre WSL2 no rinde en Fase 3: mantener LocalVoiceProvider
   sobre CPU y documentar la medición, en vez de reinstalar el sistema.
+
+---
+
+## ADR-010 — LLM tras endpoint compatible con OpenAI; modelo elegido por admisión
+
+**Fecha:** 2026-09-12 · **Estado:** aceptada
+
+**Contexto.** El plan nombraba Groq, pero el acceso a su consola falló. Groq,
+OpenRouter, Mistral, Moonshot, DeepSeek y un vLLM autoalojado exponen la misma
+API compatible con OpenAI. La tarea del agente es clasificar intención y elegir
+entre tres herramientas: clasificación con vocabulario cerrado, donde la
+latencia pesa más que la capacidad de razonamiento.
+
+**Decisión.**
+- `langchain-openai` apuntando a `LLM_BASE_URL`; proveedor y modelo son
+  configuración, no código. Proveedor actual: OpenRouter (tier gratuito).
+- Modelo: `liquid/lfm-2.5-2.6b:free`, elegido con una prueba de admisión sobre
+  las 3 tools reales (`sandbox/11_admision_real.py`).
+
+**Resultados de la admisión** (4 casos: precio, fecha en lenguaje natural,
+saludo sin tool, negarse a agendar con datos incompletos):
+
+| Modelo | Aciertos | Latencia media |
+|---|---|---|
+| liquid/lfm-2.5-2.6b:free | 4/4 | 1.20 s |
+| dots-studio/dots-3-note-preview:free | 4/4 | 2.42 s |
+| nvidia/nemotron-3.5-lightning:free | apto en prueba simple | 5.4 s, descartado por latencia |
+| google/gemma-4-26b/31b:free | — | 429, pool compartido saturado |
+| minimax/minimax-m2.7:free | — | 404, sin endpoint bajo la política de datos |
+
+**Alternativas descartadas.**
+- `langchain-groq` o SDKs por proveedor: una dependencia y un cambio de código
+  por cada proveedor.
+- Modelos grandes de razonamiento: peor tiempo hasta el primer token, crítico
+  en una llamada telefónica, sin mejora medible en la selección de 3 tools.
+
+**Consecuencias y riesgos.**
+- Cuatro casos no garantizan la calidad: la validación real son los 5
+  escenarios de conversación de Fase 2. Respaldo si falla:
+  `dots-studio/dots-3-note-preview:free`.
+- Los pools gratuitos devuelven 429 sin aviso. El nodo de manejo de error de
+  Fase 2 debe incluir modelo de respaldo.
+- Los modelos gratuitos pueden entrenar con los prompts. Aceptable con datos
+  sintéticos; **inaceptable** con conversaciones reales de clientes, lo que
+  exigiría un modelo de pago con política de no retención.
+- Habilita servir el LLM desde la 7900XTX en el futuro sin rediseño, y comparar
+  modelos en Fase 5 cambiando solo variables de entorno.

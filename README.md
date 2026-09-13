@@ -32,9 +32,9 @@ graph TD;
 
 ### Dos switches independientes
 
-| Switch | Qué controla | Valores |
-|---|---|---|
-| **A — Infraestructura** | Dónde corre la app completa | AWS ECS Fargate / homelab con Cloudflare Tunnel |
+| Switch                   | Qué controla                                 | Valores                                                                         |
+| ------------------------ | -------------------------------------------- | ------------------------------------------------------------------------------- |
+| **A — Infraestructura**  | Dónde corre la app completa                  | AWS ECS Fargate / homelab con Cloudflare Tunnel                                 |
 | **B — Proveedor de voz** | Qué implementación de `VoiceProvider` se usa | cloud (Azure Speech / Groq Whisper) / local (Faster-Whisper + Piper sobre ROCm) |
 
 Son ortogonales: la app en AWS puede usar voz local y viceversa. El switch B
