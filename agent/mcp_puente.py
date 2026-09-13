@@ -34,14 +34,31 @@ class ResultadoTool:
         return f"ERROR: {self.error}"
 
 
+def _causa_raiz(error: BaseException) -> str:
+    """Desenvuelve los ExceptionGroup de las librerías async.
+
+    anyio agrupa los fallos de sus tareas en un ExceptionGroup cuyo mensaje es
+    'unhandled errors in a TaskGroup (1 sub-exception)', que no dice nada. La
+    causa útil (ConnectError, TimeoutError...) está dentro.
+    """
+    while isinstance(error, BaseExceptionGroup) and error.exceptions:
+        error = error.exceptions[0]
+    return f"{type(error).__name__}: {error}"
+
+
 async def descubrir_tools(url: str) -> list[dict[str, Any]]:
     """Pregunta al servidor qué tools ofrece y las traduce al formato OpenAI.
 
     El input_schema de MCP ya es JSON Schema, así que la traducción es solo
     envolverlo. Con 3 tools no hace falta paginar (next_cursor).
     """
-    async with Client(url) as cliente:
-        resultado = await cliente.list_tools()
+    try:
+        async with Client(url) as cliente:
+            resultado = await cliente.list_tools()
+    except Exception as error:
+        # Al arrancar, fallar ruidosamente ES lo correcto: un agente sin tools
+        # no debe atender llamadas. Pero con un mensaje que diga por qué.
+        raise RuntimeError(f"No se pudieron descubrir tools en {url}: {_causa_raiz(error)}") from error
 
     return [
         {
@@ -72,7 +89,7 @@ async def ejecutar_tool(url: str, nombre: str, argumentos: dict[str, Any]) -> Re
             respuesta = await cliente.call_tool(nombre, argumentos)
     except Exception as error:
         return ResultadoTool(
-            nombre, False, None, f"servidor MCP inalcanzable: {error}", transporte=True
+            nombre, False, None, f"servidor MCP inalcanzable: {_causa_raiz(error)}", transporte=True
         )
 
     if respuesta.is_error:

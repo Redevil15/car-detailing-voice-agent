@@ -252,3 +252,48 @@ saludo sin tool, negarse a agendar con datos incompletos):
   exigiría un modelo de pago con política de no retención.
 - Habilita servir el LLM desde la 7900XTX en el futuro sin rediseño, y comparar
   modelos en Fase 5 cambiando solo variables de entorno.
+
+---
+
+## ADR-011 — Grafo del agente: puente MCP propio, clarificación determinista y taxonomía de fallos
+
+**Fecha:** 2026-09-12 · **Estado:** aceptada
+
+**Contexto.** El agente debe descubrir las tools del servidor MCP, decidir
+cuándo usarlas, no cotizar el servicio equivocado ante ambigüedad y no dejar
+al cliente en silencio si algo falla. El adaptador oficial
+`langchain-mcp-adapters` exige `mcp<2`, incompatible con el ADR-005.
+
+**Decisión.**
+- Puente propio (`agent/mcp_puente.py`): `tools/list` a formato OpenAI, y
+  `tools/call` que nunca lanza excepción y devuelve todo fallo como dato.
+- Una conexión MCP por llamada: medido en 11-14 ms frente a ~1200 ms del LLM.
+- Grafo de 4 nodos: `agente`, `herramientas`, `clarificar`, `manejar_error`.
+  La respuesta final la redacta el segundo paso por `agente`; un nodo
+  `responder` separado duplicaría la misma llamada al LLM.
+- **La clarificación es una ruta determinista**: si `consultar_precio`
+  devuelve sugerencias, el grafo pregunta sin consultar al LLM.
+- Taxonomía de fallos: error de la tool → vuelve al LLM para autocorregirse
+  (máximo 2); fallo de transporte o LLM caído → `manejar_error`.
+- Modelo de respaldo con `with_fallbacks` y memoria por llamada con
+  checkpointer (`thread_id`); los campos de un solo turno se reinician en cada
+  entrada porque el checkpointer persiste todo el estado.
+
+**Alternativas descartadas.**
+- Bajar a MCP 1.x para usar el adaptador: construir sobre un API obsoleto.
+- Dejar la ambigüedad al criterio del LLM: ante dos candidatos, un modelo
+  tiende a elegir el más probable en vez de preguntar.
+- Sesión MCP persistente: más compleja y sin ganancia medible; la conexión
+  por llamada además se recupera sola cuando el servidor vuelve.
+
+**Consecuencias medidas.**
+- Clarificar es más seguro y además más barato: se salta la segunda llamada
+  al LLM (0.83 s frente a 2.55 s en la misma corrida).
+- Caída del servidor a mitad de llamada: ruta a `manejar_error` sin traceback,
+  y recuperación sin reiniciar el agente.
+- `evals/fase2_escenarios.py`: 5/5 escenarios (2 ambiguos), 7/7
+  verificaciones objetivas contra la base, sin cita duplicada ante un "sí"
+  repetido. Latencia media 3.05 s por turno, máxima 7.41 s sin explicación
+  posible sin tracing.
+- Limitación: una corrida sobre un modelo no determinista; Fase 5 debe repetir
+  cada escenario y reportar tasas.

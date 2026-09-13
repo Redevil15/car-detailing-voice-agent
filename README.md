@@ -16,19 +16,27 @@ una interfaz que ya dominan.
 ```mermaid
 graph TD;
 	__start__([<p>__start__</p>]):::first
-	interpretar(interpretar)
-	responder(responder)
+	agente(agente)
+	herramientas(herramientas)
+	clarificar(clarificar)
+	manejar_error(manejar_error)
 	__end__([<p>__end__</p>]):::last
-	__start__ --> interpretar;
-	interpretar --> responder;
-	responder --> __end__;
+	__start__ --> agente;
+	agente -. &nbsp;fin&nbsp; .-> __end__;
+	agente -.-> herramientas;
+	agente -.-> manejar_error;
+	herramientas -.-> agente;
+	herramientas -.-> clarificar;
+	herramientas -.-> manejar_error;
+	clarificar --> __end__;
+	manejar_error --> __end__;
 	classDef default fill:#f2f0ff,line-height:1.2
 	classDef first fill-opacity:0
 	classDef last fill:#bfb6fc
 ```
 
 > Diagrama generado desde el código con `draw_mermaid()`. Se actualiza en
-> cada fase; el grafo real de Fase 2 añade decisión de tool y clarificación.
+> cada fase; incluye la ruta determinista de clarificación y el manejo de errores.
 
 ### Dos switches independientes
 
@@ -49,7 +57,7 @@ Docker · Langfuse · AWS ECS Fargate · Cloudflare Tunnel
 
 - [x] **Fase 0** — Fundamentos y entorno
 - [x] **Fase 1** — Servidor MCP con las herramientas del negocio
-- [ ] **Fase 2** — Orquestador LangGraph
+- [x] **Fase 2** — Orquestador LangGraph
 - [ ] **Fase 3** — Capa de voz con switch local/nube
 - [ ] **Fase 4** — Despliegue dual (AWS + homelab)
 - [ ] **Fase 5** — Observabilidad, evaluación y documentación

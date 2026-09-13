@@ -131,8 +131,8 @@
         <span class="what">Entorno con <code>uv</code>, Python 3.12 fijado, grafo de 2 nodos</span></li>
       <li class="done"><span class="mark">✓</span><span class="ph">Fase 1</span>
         <span class="what">Servidor MCP sobre Streamable HTTP con las 3 tools y el mock SQLite</span></li>
-      <li><span class="mark">○</span><span class="ph">Fase 2</span>
-        <span class="what">Grafo real: interpretar, decidir tool, clarificar, responder</span></li>
+      <li class="done"><span class="mark">✓</span><span class="ph">Fase 2</span>
+        <span class="what">Grafo con clarificación determinista y memoria por llamada · 5/5 escenarios</span></li>
       <li><span class="mark">○</span><span class="ph">Fase 3</span>
         <span class="what"><code>VoiceProvider</code> con implementación de nube y local</span></li>
       <li><span class="mark">○</span><span class="ph">Fase 4</span>
@@ -144,7 +144,7 @@
 
   <footer>
     Generado a partir del repositorio <code>car-detailing-voice-agent</code>, estado al cierre de
-    Fase 1 (6 de septiembre de 2026). Las cajas con fase futura no son especulación: cada una
+    Fase 2 (12 de septiembre de 2026). Las cajas con fase futura no son especulación: cada una
     corresponde a una decisión ya registrada en <code>docs/decision-log.md</code>. Todos los datos
     del sistema son sintéticos.
   </footer>
@@ -155,11 +155,11 @@
 const D1_NODES = [
   { id:'cliente', label:'Cliente',          sub:'llamada de voz',       role:'client',  col:0, row:0 },
   { id:'api',     label:'API de voz',       sub:'FastAPI · Fase 3',     role:'edge',    col:1, row:0 },
-  { id:'agente',  label:'Agente LangGraph', sub:'grafo con estado · F2',role:'compute', col:2, row:0 },
+  { id:'agente',  label:'Agente LangGraph', sub:'4 nodos · memoria',    role:'compute', col:2, row:0 },
   { id:'mcp',     label:'Servidor MCP',     sub:'Streamable HTTP :8000',role:'compute', col:3, row:0 },
   { id:'db',      label:'SQLite',           sub:'detailing.db · mock',  role:'data',    col:4, row:0 },
   { id:'voz',     label:'VoiceProvider',    sub:'Strategy · Fase 3',    role:'compute', col:1, row:1 },
-  { id:'llm',     label:'Groq · LLM',       sub:'tool calling · Fase 2',role:'external',col:2, row:1, ext:true },
+  { id:'llm',     label:'OpenRouter · LLM', sub:'lfm-2.5 · 2.6B',       role:'external',col:2, row:1, ext:true },
 ];
 const D1_EDGES = [
   { id:'d1e1', from:'cliente', to:'api',    label:'audio · HTTP' },
@@ -180,7 +180,7 @@ const D2_NODES = [
   { id:'tunnel',  label:'Cloudflare Tunnel', sub:'sin abrir puertos',     role:'edge',    col:1, row:2 },
   { id:'fargate', label:'ECS Fargate',       sub:'misma imagen · Fase 4', role:'compute', col:2, row:0 },
   { id:'wsl',     label:'Docker en WSL2',    sub:'7900XTX · Fase 4',      role:'compute', col:2, row:2 },
-  { id:'nube',    label:'Azure Speech / Groq',sub:'VOICE_PROVIDER=cloud', role:'external',col:3, row:0, ext:true },
+  { id:'nube',    label:'Azure Speech',      sub:'VOICE_PROVIDER=cloud',  role:'external',col:3, row:0, ext:true },
   { id:'local',   label:'Whisper + Piper',   sub:'VOICE_PROVIDER=local',  role:'compute', col:3, row:2 },
 ];
 const D2_EDGES = [
