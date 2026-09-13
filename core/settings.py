@@ -31,6 +31,7 @@ class Ajustes:
     llm_base_url: str
     llm_api_key: str
     llm_model: str
+    llm_model_respaldo: str  # opcional: entra si el principal falla
     groq_api_key: str  # solo para Whisper (STT) en Fase 3
     mcp_server_url: str
     langfuse_host: str
@@ -88,6 +89,7 @@ def obtener_ajustes() -> Ajustes:
         llm_base_url=_leer("LLM_BASE_URL", "https://openrouter.ai/api/v1"),
         llm_api_key=_leer("LLM_API_KEY"),
         llm_model=_leer("LLM_MODEL"),
+        llm_model_respaldo=_leer("LLM_MODEL_RESPALDO"),
         groq_api_key=_leer("GROQ_API_KEY"),
         mcp_server_url=_leer("MCP_SERVER_URL", "http://127.0.0.1:8000/mcp"),
         langfuse_host=_leer("LANGFUSE_HOST", "https://cloud.langfuse.com"),

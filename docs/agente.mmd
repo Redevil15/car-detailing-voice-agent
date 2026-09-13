@@ -1,0 +1,24 @@
+---
+config:
+  flowchart:
+    curve: linear
+---
+graph TD;
+	__start__([<p>__start__</p>]):::first
+	agente(agente)
+	herramientas(herramientas)
+	clarificar(clarificar)
+	manejar_error(manejar_error)
+	__end__([<p>__end__</p>]):::last
+	__start__ --> agente;
+	agente -. &nbsp;fin&nbsp; .-> __end__;
+	agente -.-> herramientas;
+	agente -.-> manejar_error;
+	herramientas -.-> agente;
+	herramientas -.-> clarificar;
+	herramientas -.-> manejar_error;
+	clarificar --> __end__;
+	manejar_error --> __end__;
+	classDef default fill:#f2f0ff,line-height:1.2
+	classDef first fill-opacity:0
+	classDef last fill:#bfb6fc
