@@ -122,6 +122,14 @@ def menciona(*alternativas: str) -> Verificacion:
     return verificar
 
 
+def no_menciona(*prohibidas: str) -> Verificacion:
+    def verificar(r: ResultadoTurno):
+        texto = r.respuesta.lower()
+        dichas = [p for p in prohibidas if p in texto]
+        return f"no debía decir {dichas}" if dichas else None
+    return verificar
+
+
 def todas(*verificaciones: Verificacion) -> Verificacion:
     def verificar(r: ResultadoTurno):
         for v in verificaciones:
@@ -187,6 +195,10 @@ def construir_escenarios() -> list[Escenario]:
         Escenario("Precio directo", [
             ("¿Cuánto cuesta el encerado?",
              todas(llamo("consultar_precio"), menciona("1200", "1,200", "mil doscientos"))),
+        ]),
+        Escenario("Catálogo: la pregunta que antes fallaba", [
+            ("¿Qué servicios tienen?",
+             todas(llamo("listar_servicios"), no_menciona("no lo manejamos"))),
         ]),
         Escenario("Ambigüedad: 'el lavado', resuelta con memoria", [
             ("¿Cuánto sale el lavado?", termina_en("clarificar")),

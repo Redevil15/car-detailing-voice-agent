@@ -14,6 +14,7 @@ from mcp_types import ToolAnnotations
 from mcp_server.tools import (
     checar_disponibilidad,
     consultar_precio,
+    listar_servicios,
     registrar_servicio,
 )
 
@@ -28,6 +29,7 @@ Reglas de uso:
 - Nunca inventes precios, horarios ni folios. Todos vienen de estas tools.
 - Si consultar_precio devuelve encontrado=False con sugerencias, pregúntale
   al cliente cuál de esas opciones quiere. No elijas por él.
+- Si el cliente pregunta qué servicios hay en general, usa listar_servicios.
 - Confirma los cinco datos con el cliente antes de llamar registrar_servicio:
   esa herramienta crea una cita real en la agenda del taller.
 """
@@ -60,6 +62,7 @@ def construir_servidor() -> MCPServer:
     )
 
     servidor.tool(annotations=SOLO_LECTURA)(consultar_precio)
+    servidor.tool(annotations=SOLO_LECTURA)(listar_servicios)
     servidor.tool(annotations=SOLO_LECTURA)(checar_disponibilidad)
     servidor.tool(annotations=ESCRITURA)(registrar_servicio)
 

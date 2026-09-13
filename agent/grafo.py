@@ -35,6 +35,8 @@ class EstadoAgente(TypedDict):
     # se reinician en cada entrada (ver entrada_de_turno); si no, la ambigüedad
     # del turno anterior contaminaría el siguiente.
     sugerencias: list[str]
+    motivo_aclaracion: str | None  # 'ambiguo' o 'sin_coincidencia': lo declara la tool
+    avisos_llm: list[str]  # errores del modelo principal cuando respondió el respaldo
     errores_de_tool: int
     fallo_grave: str | None
 
@@ -44,6 +46,8 @@ def entrada_de_turno(texto: str) -> dict[str, Any]:
     return {
         "messages": [HumanMessage(texto)],
         "sugerencias": [],
+        "motivo_aclaracion": None,
+        "avisos_llm": [],
         "errores_de_tool": 0,
         "fallo_grave": None,
     }
@@ -94,12 +98,13 @@ def ruta_tras_herramientas(estado: EstadoAgente) -> Literal["agente", "clarifica
 
 def clarificar(estado: EstadoAgente) -> dict[str, Any]:
     opciones = estado["sugerencias"]
-    if len(opciones) <= 3:
-        texto = f"Tenemos {_enumerar(opciones)}. ¿Cuál le interesa?"
-    else:
-        # Muchos candidatos significa que no hubo coincidencia: leer el catálogo
-        # completo por teléfono sería eterno, así que se ofrecen tres.
+    # El motivo lo DECLARA la tool. Antes se deducía de la longitud de la lista,
+    # y "¿qué servicios tienen?" acababa en "ese servicio no lo manejamos".
+    if estado.get("motivo_aclaracion") == "sin_coincidencia":
+        # Leer el catálogo completo por teléfono sería eterno: se ofrecen tres.
         texto = f"Ese servicio no lo manejamos. Tenemos, por ejemplo, {_enumerar(opciones[:3])}. ¿Le interesa alguno?"
+    else:
+        texto = f"Tenemos {_enumerar(opciones)}. ¿Cuál le interesa?"
     return {"messages": [AIMessage(texto)]}
 
 
@@ -109,6 +114,24 @@ def manejar_error(estado: EstadoAgente) -> dict[str, Any]:
         "agenda. ¿Podría llamarnos de nuevo en unos minutos?"
     )
     return {"messages": [AIMessage(texto)]}
+
+
+async def invocar_con_respaldo(
+    candidatos: list[tuple[str, Any]], mensajes: list
+) -> tuple[AIMessage | None, list[str]]:
+    """Prueba cada modelo en orden. Devuelve (respuesta, errores de los que fallaron).
+
+    Sustituye a with_fallbacks, que relanza solo el PRIMER error y descarta los
+    demás: con los dos modelos fallando, la mitad del diagnóstico se perdía.
+    Vive a nivel de módulo para poder probarla con modelos falsos, sin red.
+    """
+    errores: list[str] = []
+    for nombre, llm in candidatos:
+        try:
+            return await llm.ainvoke(mensajes), errores
+        except Exception as error:
+            errores.append(f"{nombre}: {type(error).__name__}: {str(error)[:300]}")
+    return None, errores
 
 
 # ---------------------------------------------------------------- ensamblado
@@ -128,23 +151,26 @@ async def construir_agente(ajustes: Ajustes, checkpointer=None):
             temperature=0, timeout=30, max_retries=0,
         ).bind_tools(tools)
 
-    llm = _llm(modelo)
+    # Principal y respaldo, en orden: ver invocar_con_respaldo.
+    candidatos = [(modelo, _llm(modelo))]
     if ajustes.llm_model_respaldo:
-        # Si el principal falla (429 del pool gratuito, timeout), se reintenta
-        # la MISMA petición con el respaldo, sin código de reintento a mano.
-        llm = llm.with_fallbacks([_llm(ajustes.llm_model_respaldo)])
+        candidatos.append((ajustes.llm_model_respaldo, _llm(ajustes.llm_model_respaldo)))
 
     async def agente(estado: EstadoAgente) -> dict[str, Any]:
-        try:
-            respuesta = await llm.ainvoke([SystemMessage(_prompt_sistema()), *estado["messages"]])
-        except Exception as error:
-            return {"fallo_grave": f"LLM no disponible: {type(error).__name__}"}
-        return {"messages": [respuesta]}
+        respuesta, errores = await invocar_con_respaldo(
+            candidatos, [SystemMessage(_prompt_sistema()), *estado["messages"]]
+        )
+        if respuesta is None:
+            return {"fallo_grave": "ningún modelo respondió -> " + " | ".join(errores)}
+        # Un turno puede pasar dos veces por aquí (ciclo ReAct), así que se
+        # acumula a mano: un reducer de suma impediría reiniciar la lista por turno.
+        return {"messages": [respuesta], "avisos_llm": estado.get("avisos_llm", []) + errores}
 
     async def herramientas(estado: EstadoAgente) -> dict[str, Any]:
         ultimo = estado["messages"][-1]
         mensajes: list[ToolMessage] = []
         sugerencias: list[str] = []
+        motivo_aclaracion: str | None = None
         errores = estado["errores_de_tool"]
         fallo = None
 
@@ -164,10 +190,12 @@ async def construir_agente(ajustes: Ajustes, checkpointer=None):
                 errores += 1
             elif llamada["name"] == "consultar_precio" and not resultado.datos.get("encontrado"):
                 sugerencias = resultado.datos.get("sugerencias", [])
+                motivo_aclaracion = resultado.datos.get("motivo")
 
         return {
             "messages": mensajes,
             "sugerencias": sugerencias,
+            "motivo_aclaracion": motivo_aclaracion,
             "errores_de_tool": errores,
             "fallo_grave": fallo,
         }

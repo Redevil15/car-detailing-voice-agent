@@ -10,6 +10,7 @@ una docstring vaga aquí es un bug funcional.
 
 import unicodedata
 from datetime import date
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -48,6 +49,14 @@ class ResultadoPrecio(BaseModel):
         default_factory=list,
         description="Servicios candidatos cuando no hubo una coincidencia única",
     )
+    motivo: Literal["encontrado", "ambiguo", "sin_coincidencia"] = Field(
+        default="encontrado",
+        description=(
+            "Por qué terminó así la búsqueda: 'ambiguo' si coinciden varios "
+            "servicios, 'sin_coincidencia' si no coincide ninguno. Decide con "
+            "este campo, nunca con la longitud de 'sugerencias'."
+        ),
+    )
 
 
 def consultar_precio(servicio: str) -> ResultadoPrecio:
@@ -59,6 +68,8 @@ def consultar_precio(servicio: str) -> ResultadoPrecio:
     Si el texto coincide con varios servicios, devuelve encontrado=False y la
     lista de candidatos en 'sugerencias' para que se le pregunte al cliente
     cuál quiere. No adivines por él.
+
+    Si el cliente pregunta qué servicios hay en general, usa listar_servicios.
     """
     conexion = conectar()
     try:
@@ -86,11 +97,48 @@ def consultar_precio(servicio: str) -> ResultadoPrecio:
             descripcion=fila["descripcion"],
         )
 
-    candidatos = coincidencias if coincidencias else filas
+    if coincidencias:
+        return ResultadoPrecio(
+            encontrado=False,
+            motivo="ambiguo",
+            sugerencias=[fila["nombre"] for fila in coincidencias],
+        )
     return ResultadoPrecio(
         encontrado=False,
-        sugerencias=[fila["nombre"] for fila in candidatos],
+        motivo="sin_coincidencia",
+        sugerencias=[fila["nombre"] for fila in filas],
     )
+
+
+class ServicioCatalogo(BaseModel):
+    nombre: str = Field(description="Nombre oficial del servicio")
+    precio_mxn: int = Field(description="Precio en pesos mexicanos")
+    duracion_min: int = Field(description="Duración estimada en minutos")
+
+
+class ResultadoCatalogo(BaseModel):
+    servicios: list[ServicioCatalogo] = Field(
+        description="Servicios activos, del más barato al más caro"
+    )
+
+
+def listar_servicios() -> ResultadoCatalogo:
+    """Lista todos los servicios del taller, con precio y duración.
+
+    Úsala cuando el cliente pregunte qué servicios hay, qué hacen o qué
+    ofrecen, sin mencionar uno en concreto. Al responder por voz menciona solo
+    algunos y ofrece más detalle: leer el catálogo completo es demasiado largo
+    para una llamada.
+    """
+    conexion = conectar()
+    try:
+        filas = conexion.execute(
+            "SELECT nombre, precio_mxn, duracion_min FROM servicios"
+            " WHERE activo = 1 ORDER BY precio_mxn"
+        ).fetchall()
+    finally:
+        conexion.close()
+    return ResultadoCatalogo(servicios=[ServicioCatalogo(**dict(fila)) for fila in filas])
 
 
 class ResultadoDisponibilidad(BaseModel):
