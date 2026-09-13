@@ -32,7 +32,9 @@ class Ajustes:
     llm_api_key: str
     llm_model: str
     llm_model_respaldo: str  # opcional: entra si el principal falla
-    groq_api_key: str  # solo para Whisper (STT) en Fase 3
+    groq_api_key: str  # sin uso por ahora: Groq quedó fuera (ADR-010)
+    whisper_modelo_dir: Path  # carpeta con el model.bin de faster-whisper
+    piper_voz: Path  # archivo .onnx de la voz de Piper
     mcp_server_url: str
     langfuse_host: str
 
@@ -60,6 +62,13 @@ class Ajustes:
 
 def _leer(nombre: str, defecto: str = "") -> str:
     return os.getenv(nombre, defecto).strip()
+
+
+def _ruta(nombre: str, defecto: str) -> Path:
+    """Ruta leída del entorno. Si es relativa, se resuelve contra la raíz del
+    repo y no contra el directorio desde el que se lance el proceso."""
+    ruta = Path(_leer(nombre, defecto)).expanduser()
+    return ruta if ruta.is_absolute() else RAIZ / ruta
 
 
 @lru_cache(maxsize=1)
@@ -91,6 +100,8 @@ def obtener_ajustes() -> Ajustes:
         llm_model=_leer("LLM_MODEL"),
         llm_model_respaldo=_leer("LLM_MODEL_RESPALDO"),
         groq_api_key=_leer("GROQ_API_KEY"),
+        whisper_modelo_dir=_ruta("WHISPER_MODEL_DIR", "models/whisper-small"),
+        piper_voz=_ruta("PIPER_VOICE", "models/piper/es_MX-claude-high.onnx"),
         mcp_server_url=_leer("MCP_SERVER_URL", "http://127.0.0.1:8000/mcp"),
         langfuse_host=_leer("LANGFUSE_HOST", "https://cloud.langfuse.com"),
     )

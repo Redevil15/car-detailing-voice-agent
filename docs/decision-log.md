@@ -297,3 +297,55 @@ al cliente en silencio si algo falla. El adaptador oficial
   posible sin tracing.
 - Limitación: una corrida sobre un modelo no determinista; Fase 5 debe repetir
   cada escenario y reportar tasas.
+
+---
+
+## ADR-012 — Voz local primero: faster-whisper + Piper detrás de VoiceProvider
+
+**Fecha:** 2026-09-12 · **Estado:** aceptada
+
+**Contexto.** El plan de Fase 3 empezaba por el proveedor de voz en la nube.
+El acceso a Groq falló (ADR-010) y Azure exige registrar una tarjeta para crear
+el directorio de una cuenta personal. El proveedor local no necesita cuentas.
+
+**Decisión.**
+- Invertir el orden: `LocalVoiceProvider` primero, en CPU de la Mac. El Switch B
+  no depende del orden; `CloudVoiceProvider` se añade después sin tocar el agente.
+- STT: faster-whisper `small` con `int8`, `language="es"`, `beam_size=1` y
+  `vad_filter=True`. TTS: Piper con la voz `es_MX-claude-high`.
+- Interfaz `VoiceProvider` como ABC con métodos async; el trabajo pesado va en
+  `asyncio.to_thread`. Contrato `Audio` con la frecuencia de muestreo explícita.
+- La única decisión local/nube vive en `voice/fabrica.py`.
+- Dependencias en el grupo `voz-local`, predeterminado en desarrollo y excluido
+  en la imagen de AWS con `uv sync --no-group voz-local`.
+- Modelos descargados explícitamente a `models/` (ignorada por git), nunca de
+  forma implícita la primera vez que se usa el agente.
+
+**Mediciones (Mac, CPU).**
+
+| Medición | Resultado |
+|---|---|
+| Whisper `base` | 0.60 s, pero transcribió "le gustarí la agenda" |
+| Whisper `small` | 0.86-1.17 s, transcripción correcta |
+| Piper, caliente | 0.06-0.08 s para ~4 s de audio |
+| Whisper directo en el event loop | 0 de 19 latidos: loop congelado |
+| Whisper con `to_thread` | 18 de 18 latidos |
+| 2 transcripciones en paralelo | 1.88 s, igual que en serie |
+| 3 s de silencio con VAD | cadena vacía en 0.01 s |
+
+**Alternativas descartadas.**
+- Azure Speech: requiere tarjeta para crear el directorio de una cuenta personal.
+- `edge-tts`: usa un endpoint no oficial del navegador Edge, frágil y en zona gris
+  de términos de servicio.
+- Whisper `base`: más rápido, pero confunde el verbo de la intención principal.
+- Kokoro: mejor calidad potencial, pero arrastra PyTorch (varios GB); se
+  reevaluará en el homelab.
+- Extras opcionales de `uv`: un `uv sync` a secas los desinstala sin avisar.
+
+**Consecuencias y riesgos.**
+- En la Mac, `ctranslate2` corre solo en CPU (no usa la GPU de Apple).
+- Capacidad actual: una transcripción a la vez; las concurrentes esperan.
+- Riesgo abierto para Fase 4: la aceleración GPU de `ctranslate2` es para CUDA; en
+  la 7900XTX puede requerir un build para ROCm o Whisper vía PyTorch con ROCm.
+- La puntuación de Whisper no es fiable; el agente no debe depender de ella.
+- `CloudVoiceProvider` sigue pendiente, y con él la prueba del switch en ambos modos.
