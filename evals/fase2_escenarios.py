@@ -1,6 +1,6 @@
 """Escenarios de evaluación de Fase 2.
 
-Cinco conversaciones, dos de ellas ambiguas, con verificaciones OBJETIVAS:
+Siete conversaciones, dos de ellas ambiguas, con verificaciones OBJETIVAS:
 qué tool se llamó, con qué argumentos, qué ruta tomó el grafo y qué quedó en
 la base de datos. Nada se juzga "a ojo". Es la base de las métricas de Fase 5.
 
@@ -13,7 +13,9 @@ Requiere el servidor MCP corriendo en el puerto 8000.
 from __future__ import annotations
 
 import asyncio
+import re
 import time
+import unicodedata
 from dataclasses import dataclass
 from datetime import date, timedelta
 from typing import Callable
@@ -65,6 +67,29 @@ def fecha_con_cupo(hora: str) -> date:
     finally:
         conexion.close()
     return date.fromisoformat(fila["fecha"])
+
+
+def fecha_con_cupo_en(*horas: str) -> date:
+    """Primer día desde pasado mañana con cupo libre en TODAS esas horas."""
+    conexion = conectar()
+    try:
+        filas = conexion.execute(
+            f"""
+            SELECT d.fecha, d.hora FROM disponibilidad d
+            LEFT JOIN citas c
+              ON c.fecha = d.fecha AND c.hora = d.hora AND c.estado = 'confirmada'
+            WHERE d.hora IN ({",".join("?" * len(horas))}) AND d.fecha >= ?
+            GROUP BY d.fecha, d.hora
+            HAVING d.cupo_total - COUNT(c.id) > 0
+            """,
+            (*horas, (date.today() + timedelta(days=2)).isoformat()),
+        ).fetchall()
+    finally:
+        conexion.close()
+    libres: dict[str, set[str]] = {}
+    for fila in filas:
+        libres.setdefault(fila["fecha"], set()).add(fila["hora"])
+    return date.fromisoformat(min(f for f, h in libres.items() if h >= set(horas)))
 
 
 # ----------------------------------------------------------- modelo de datos
@@ -143,12 +168,65 @@ def usa_usted() -> Verificacion:
     return verificar
 
 
-def todas(*verificaciones: Verificacion) -> Verificacion:
+_NUMEROS = {"un": 1, "una": 1, "dos": 2, "tres": 3, "cuatro": 4,
+            "cinco": 5, "seis": 6, "siete": 7, "ocho": 8}
+_DURACION = re.compile(
+    r"dura\w*\s+(?:(?:de|es|aproximad\w*|unos?|unas|como)\s+)*"
+    r"(\d+|un|una|dos|tres|cuatro|cinco|seis|siete|ocho)\s+(horas?|minutos?)"
+)
+
+
+def duracion_correcta(minutos: int) -> Verificacion:
+    """Si la respuesta dice cuánto dura algo, debe ser la duración real.
+
+    Atrapa datos inventados: qwen3.5:2b dijo "dura una hora" de un servicio de
+    120 minutos, y ninguna verificación lo detectó.
+    """
     def verificar(r: ResultadoTurno):
-        for v in verificaciones:
-            if (motivo := v(r)) is not None:
-                return motivo
-        return None
+        texto = "".join(
+            c for c in unicodedata.normalize("NFD", r.respuesta.lower())
+            if unicodedata.category(c) != "Mn"
+        )
+        dichas = [
+            (int(n) if n.isdigit() else _NUMEROS[n]) * (60 if unidad.startswith("hora") else 1)
+            for n, unidad in _DURACION.findall(texto)
+        ]
+        malas = [d for d in dichas if d != minutos]
+        return f"dijo una duración de {malas} min; la real es {minutos}" if malas else None
+    return verificar
+
+
+_PRECIO = re.compile(r"(\d[\d,.]*)\s*pesos")
+
+
+def _precios_del_catalogo() -> set[int]:
+    conexion = conectar()
+    try:
+        return {fila["precio_mxn"] for fila in conexion.execute("SELECT precio_mxn FROM servicios")}
+    finally:
+        conexion.close()
+
+
+def precios_reales() -> Verificacion:
+    """Todo precio dicho en pesos (con dígitos) debe existir en el catálogo.
+
+    Atrapa precios inventados: qwen3.5:2b dijo que el lavado premium cuesta
+    25,000 pesos cuando cuesta 650. Es una heurística: no entiende precios
+    escritos con palabras ni sumas de varios servicios.
+    """
+    def verificar(r: ResultadoTurno):
+        dichos = {int(re.sub(r"[,.]", "", n)) for n in _PRECIO.findall(r.respuesta.lower())}
+        inventados = sorted(dichos - _precios_del_catalogo())
+        return f"precio que no existe en el catálogo: {inventados}" if inventados else None
+    return verificar
+
+
+def todas(*verificaciones: Verificacion) -> Verificacion:
+    # Reporta TODOS los motivos, no solo el primero: con cortocircuito, el tuteo
+    # ocultó que en el mismo turno el modelo había inventado una duración.
+    def verificar(r: ResultadoTurno):
+        motivos = [motivo for v in verificaciones if (motivo := v(r)) is not None]
+        return "; ".join(motivos) if motivos else None
     return verificar
 
 
@@ -179,6 +257,29 @@ def cita_unica(fecha: date, hora: str, sufijo_telefono: str, servicio: str):
     return verificar
 
 
+def sin_cita(fecha: date, sufijo_telefono: str, *horas: str):
+    """Verifica en la BASE que NO se agendó nada: para correcciones sin confirmar."""
+    def verificar():
+        conexion = conectar()
+        try:
+            filas = conexion.execute(
+                f"""
+                SELECT c.hora FROM citas c
+                JOIN clientes cl ON cl.id = c.cliente_id
+                WHERE c.fecha = ? AND c.hora IN ({",".join("?" * len(horas))})
+                  AND c.estado = 'confirmada'
+                  AND REPLACE(REPLACE(cl.telefono, ' ', ''), '-', '') LIKE ?
+                """,
+                (fecha.isoformat(), *horas, f"%{sufijo_telefono}"),
+            ).fetchall()
+        finally:
+            conexion.close()
+        if filas:
+            return f"se agendó sin confirmación a las {[f['hora'] for f in filas]}"
+        return None
+    return verificar
+
+
 # ---------------------------------------------------------------- ejecución
 
 async def correr_turno(grafo, config: dict, frase: str) -> ResultadoTurno:
@@ -201,13 +302,24 @@ async def correr_turno(grafo, config: dict, frase: str) -> ResultadoTurno:
     return ResultadoTurno(frase, ruta, str(nuevos[-1].content), llamadas, segundos)
 
 
+# Se aplican a TODOS los turnos de todos los escenarios.
+VERIFICACIONES_GLOBALES: tuple[Verificacion, ...] = (
+    # El razonamiento interno de un modelo nunca debe llegar al TTS.
+    no_menciona("<think>", "</think>"),
+    # Ningún precio fuera del catálogo, en ningún turno.
+    precios_reales(),
+)
+
+
 def construir_escenarios() -> list[Escenario]:
     jueves = proximo(3)
     dia_cita = fecha_con_cupo("11:00")
+    dia_correccion = fecha_con_cupo_en("11:00", "13:00")
     return [
         Escenario("Precio directo", [
             ("¿Cuánto cuesta el encerado?",
-             todas(llamo("consultar_precio"), menciona("1200", "1,200", "mil doscientos"))),
+             todas(llamo("consultar_precio"), menciona("1200", "1,200", "mil doscientos"),
+                   duracion_correcta(120))),
         ]),
         Escenario("Catálogo: la pregunta que antes fallaba", [
             ("¿Qué servicios tienen?",
@@ -233,15 +345,24 @@ def construir_escenarios() -> list[Escenario]:
         ]),
         Escenario("Agendar de punta a punta", [
             (f"Quiero agendar un encerado para {en_palabras(dia_cita)} a las once de la mañana",
-             todas(no_llamo("registrar_servicio"), usa_usted())),
-            # Debe APROVECHAR los datos recién dados (nombrar a la clienta) en vez
-            # de volver a pedirlos, que es lo que hizo qwen3.5:2b la primera vez.
+             todas(no_llamo("registrar_servicio"), usa_usted(), duracion_correcta(120))),
+            # Con los cinco datos, el LLM propone registrar y el GRAFO pide la
+            # confirmación con texto determinista que nombra a la clienta.
             ("Me llamo Ramona Pérez y mi teléfono es 55 1234 5678",
-             todas(menciona("ramona"), usa_usted())),
-            # Si el agente ya agendó en el turno anterior, este "sí" es la
-            # trampa clásica: una tool NO idempotente llamada dos veces.
-            ("Sí, así está bien", None),
+             todas(menciona("ramona"), termina_en("confirmar"))),
+            # El "sí" se resuelve sin LLM. La verificación final en la base
+            # exige UNA cita: ni cero ni duplicada.
+            ("Sí, así está bien", termina_en("ejecutar_registro")),
         ], final=cita_unica(dia_cita, "11:00", "12345678", "Encerado")),
+        Escenario("Corrección antes de confirmar", [
+            (f"Quiero agendar un lavado premium para {en_palabras(dia_correccion)} a las once "
+             "de la mañana, a nombre de Julián Torres, teléfono 55 8765 4321",
+             termina_en("confirmar")),
+            # Una corrección NO es un "sí": no debe agendar nada a las once, y el
+            # LLM debe proponer el registro de nuevo con la hora corregida.
+            ("No, mejor a la una de la tarde",
+             todas(termina_en("confirmar"), menciona("una de la tarde"))),
+        ], final=sin_cita(dia_correccion, "87654321", "11:00", "13:00")),
     ]
 
 
@@ -263,9 +384,11 @@ async def main() -> None:
             print(f"   CLIENTE: {frase}")
             print(f"   ruta   : {' -> '.join(r.ruta)}  ({r.segundos:.2f}s)")
             print(f"   AGENTE : {r.respuesta}")
-            if verificar:
+            for v in (verificar, *VERIFICACIONES_GLOBALES):
+                if v is None:
+                    continue
                 verificaciones += 1
-                if (motivo := verificar(r)) is not None:
+                if (motivo := v(r)) is not None:
                     fallidas += 1
                     motivos.append(motivo)
             await asyncio.sleep(1.5)
