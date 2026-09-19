@@ -349,3 +349,59 @@ el directorio de una cuenta personal. El proveedor local no necesita cuentas.
   la 7900XTX puede requerir un build para ROCm o Whisper vía PyTorch con ROCm.
 - La puntuación de Whisper no es fiable; el agente no debe depender de ella.
 - `CloudVoiceProvider` sigue pendiente, y con él la prueba del switch en ambos modos.
+
+---
+
+## ADR-013 — LLM local con Ollama: qwen3.5:4b con razonamiento activado
+
+**Fecha:** 2026-09-19 · **Estado:** aceptada
+
+**Contexto.** La cuenta gratuita de OpenRouter tiene un tope de 50 peticiones
+diarias por cuenta (no por modelo), lo que hace inviable repetir el arnés. Se
+instaló Ollama sin Homebrew (su prefijo pertenece a otra cuenta del equipo) y
+se evaluaron cuatro modelos locales con el arnés completo de 7 escenarios.
+
+**Decisión.** `qwen3.5:4b` como modelo principal y `qwen3.5:9b` como respaldo,
+con `LLM_REASONING_EFFORT` vacío, es decir, con el razonamiento activado.
+
+**Matriz de mediciones** (mismo arnés, misma máquina, una corrida por fila):
+
+| Modelo | Razonamiento | Escenarios | Verificaciones | Latencia media |
+|---|---|---|---|---|
+| qwen3.5:2b | apagado | 5/7 | 27/35 | 1.25 s |
+| qwen3.5:2b | low | 2/7 | 27/35 | 3.61 s |
+| qwen3.5:2b | activado | 2/7 | 27/35 | 3.67 s |
+| qwen3.5:4b | apagado | 3/7 | 29/35 | 2.22 s |
+| qwen3.5:4b | low | 7/7 | 35/35 | 6.11 s |
+| **qwen3.5:4b** | **activado** | **7/7** | **35/35** | **6.30 s** |
+| qwen3.5:9b | apagado | 0/7 | 22/35 | 2.73 s |
+| qwen3.5:9b | activado | 7/7 | 35/35 | 7.70 s |
+
+**Hallazgos.**
+- `reasoning_effort="none"` rompe el uso de herramientas: el 9b pasó de 7/7 a
+  0/7 y contestaba de memoria, inventando precios y servicios inexistentes.
+  Varios modelos deciden llamar una tool durante el razonamiento.
+- `"low"` no es un punto medio: rinde igual que dejarlo activado.
+- El 2b tiene un techo de capacidad, no de configuración: con razonamiento
+  empeora (2/7) y ni siquiera repite el precio que la tool le devolvió.
+- El 4b iguala al 9b en calidad siendo 1.6 s más rápido y ocupando la mitad
+  de memoria.
+
+**Desglose de latencia** (qwen3.5:4b, modelo ya cargado): el LLM es el 99-100%
+del turno; MCP tarda 10-55 ms y el grafo ~10 ms. Cada turno con herramienta
+hace DOS llamadas al modelo: decidir la tool y redactar la respuesta.
+
+**Alternativas descartadas.**
+- OpenRouter de pago (10 USD para 1000 peticiones diarias): resuelve el tope,
+  pero mantiene la dependencia de terceros y la política de datos de los
+  modelos gratuitos.
+- `lfm2.5:8b`: 2/7, ignora `reasoning_effort` y filtra su razonamiento en el
+  texto de la respuesta, que el TTS leería en voz alta.
+
+**Consecuencias.**
+- Costo cero, sin límite diario y sin que los datos salgan de la máquina.
+- 6.1 s por turno frente a un presupuesto de ~2 s para voz. Trabajo pendiente:
+  respuesta determinista para resultados frecuentes de tools, reproducción por
+  frases mientras el modelo escribe, y el homelab de Fase 4.
+- Una corrida por configuración (n=1): sirve para descartar comportamientos,
+  no para declarar diferencias pequeñas.
