@@ -14,6 +14,8 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
+from importlib.metadata import PackageNotFoundError, version
+
 from dotenv import load_dotenv
 
 RAIZ = Path(__file__).resolve().parent.parent
@@ -38,6 +40,8 @@ class Ajustes:
     piper_voz: Path  # archivo .onnx de la voz de Piper
     mcp_server_url: str
     langfuse_host: str
+    version_app: str  # sale de pyproject, no de una constante
+    commit_git: str   # lo inyecta el build de Docker
 
     def exigir_llm(self) -> tuple[str, str, str]:
         """Devuelve (api_key, modelo, base_url) o falla con un mensaje útil.
@@ -59,6 +63,18 @@ class Ajustes:
             if "PEGA_AQUI" in valor or "EL_QUE_ELIJAS" in valor:
                 raise RuntimeError(f"{nombre} tiene un marcador sin sustituir en .env.")
         return self.llm_api_key, self.llm_model, self.llm_base_url
+
+
+def _version_instalada() -> str:
+    """Una sola fuente de verdad para la version: pyproject.
+
+    Una constante VERSION en el codigo se desactualiza el primer dia que
+    alguien sube la version y se olvida de tocarla.
+    """
+    try:
+        return version("car-detailing-voice-agent")
+    except PackageNotFoundError:  # ejecutado sin instalar el paquete
+        return "0.0.0-dev"
 
 
 def _leer(nombre: str, defecto: str = "") -> str:
@@ -106,4 +122,6 @@ def obtener_ajustes() -> Ajustes:
         piper_voz=_ruta("PIPER_VOICE", "models/piper/es_MX-claude-high.onnx"),
         mcp_server_url=_leer("MCP_SERVER_URL", "http://127.0.0.1:8000/mcp"),
         langfuse_host=_leer("LANGFUSE_HOST", "https://cloud.langfuse.com"),
+        version_app=_version_instalada(),
+        commit_git=_leer("GIT_COMMIT", "desconocido"),
     )

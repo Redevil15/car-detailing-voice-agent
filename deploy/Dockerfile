@@ -34,7 +34,10 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 # hatchling valida los metadatos al instalar el proyecto, y pyproject.toml
 # declara readme = "README.md": sin este archivo, el build falla.
 COPY README.md ./
+# --chmod evita depender de los permisos que traiga el archivo del host.
+COPY --chmod=755 deploy/entrypoint.sh ./deploy/entrypoint.sh
 COPY agent/ ./agent/
+COPY api/ ./api/
 COPY core/ ./core/
 COPY mcp_server/ ./mcp_server/
 COPY voice/ ./voice/
@@ -65,6 +68,16 @@ ENV PATH="/app/.venv/bin:$PATH" \
     MCP_PORT=8000 \
     MCP_HOST=0.0.0.0
 
+# El commit entra como argumento de BUILD, no como variable de entorno del
+# contenedor: una imagen tiene que poder decir de que codigo salio aunque
+# la arranques sin ninguna variable. Va DESPUES del COPY grande a proposito:
+# cambiar de commit solo invalida estas tres capas de metadatos.
+ARG GIT_COMMIT=desconocido
+ENV GIT_COMMIT=${GIT_COMMIT}
+# Etiquetas OCI: 'docker inspect' las lee sin arrancar el contenedor.
+LABEL org.opencontainers.image.revision="${GIT_COMMIT}" \
+      org.opencontainers.image.source="https://github.com/Redevil15/car-detailing-voice-agent"
+
 USER taller
 EXPOSE 8000
 
@@ -72,5 +85,6 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
     CMD python -c "import os,socket; socket.create_connection(('127.0.0.1', int(os.environ['MCP_PORT'])), 2).close()"
 
-# Proceso por defecto: el servidor MCP. El agente se lanza con otro comando.
+# El entrypoint prepara el entorno; el comando decide QUÉ proceso corre.
+ENTRYPOINT ["/app/deploy/entrypoint.sh"]
 CMD ["python", "mcp_server/server.py"]

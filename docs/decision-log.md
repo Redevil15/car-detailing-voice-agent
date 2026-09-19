@@ -564,3 +564,51 @@ de entorno ya está y la interfaz no cambia.
 **Riesgo abierto para Fase 4.** La aceleración por GPU de `ctranslate2` es
 para CUDA; en la 7900XTX puede requerir un build para ROCm o Whisper vía
 PyTorch. No afecta al código detrás de `VoiceProvider`.
+
+---
+
+## ADR-018 — Una imagen, dos procesos, y dos sondas que no son la misma
+
+**Contexto.** Fase 4 pide exponer el sistema al mundo y una página que diga
+qué entorno está sirviendo. El servidor MCP no puede ser esa puerta: sus tools
+**crean citas sin autenticar a nadie**. Publicarlo es dejar la agenda del
+taller abierta a internet.
+
+**Decisión.** Un servicio HTTP aparte (`api/app.py`, FastAPI) que no reexpone
+ninguna tool: solo informa. Habla con MCP por el protocolo, igual que el
+agente, y no importa `mcp_server` ni abre la base — la frontera del ADR-004
+sigue intacta. Corre desde **la misma imagen** que MCP, cambiando solo el CMD.
+
+**Liveness y readiness separadas, a propósito.**
+
+| ruta | pregunta | si falla | depende de |
+|---|---|---|---|
+| `/salud` | ¿el proceso vive? | reinicio | nada |
+| `/listo` | ¿puede atender? | sale del balanceador | MCP |
+
+El fallo que esto evita está medido: con MCP parado, `/salud` responde 200 y
+`/listo` responde 503; cuando MCP vuelve, `/listo` vuelve a 200 **sin
+reiniciar nada**. Si `/salud` consultara MCP, un arranque lento de MCP haría
+que el orquestador matara la API en bucle por un fallo que no era suyo.
+
+**Alternativas descartadas.**
+- *Dos rutas más dentro del servidor MCP*: mezcla el proceso que hay que
+  proteger con el que hay que publicar.
+- *Starlette pelado* (ya instalado, cero dependencias nuevas): FastAPI añade
+  ~100 kB y a cambio valida las respuestas con Pydantic y genera OpenAPI. Con
+  una página de estado que va a crecer, la validación paga el peso.
+- *Una sonda que lo revise todo*: convierte cada caída de una dependencia en
+  un reinicio, y con varias réplicas, en un reinicio simultáneo de todas.
+- *Imágenes separadas por servicio*: duplica build, CVEs y superficie para dos
+  procesos que comparten el 100% del código.
+
+**Detalles que importan.** El commit entra como `ARG` de build y como etiqueta
+OCI, después del COPY grande: la imagen sabe de qué código salió sin depender
+de ninguna variable en tiempo de ejecución, y cambiar de commit solo invalida
+tres capas de metadatos. La sonda de la imagen es TCP y se sustituye en
+Compose por un GET real a `/salud` — un `nc -l` pasa una sonda TCP, así que
+esa sonda solo prueba que el puerto escucha. Kubernetes, además, **ignora el
+HEALTHCHECK del Dockerfile**: allí las probes van en el manifiesto.
+
+**Lección de método.** El log de build dijo `Built` sobre una imagen que no
+tenía `fastapi` dentro. Se comprueba entrando a la imagen, no leyendo el log.

@@ -1,22 +1,27 @@
-# Lo que nunca debe entrar a la imagen
+# OJO: .dockerignore NO es .gitignore. Los patrones se evalúan contra la ruta
+# completa desde la raíz del contexto, así que "*.db" solo atrapa un .db en la
+# raíz. Para cualquier profundidad hace falta "**/".
+
+# Entorno y modelos: se instalan o se montan, nunca se copian
 .venv/
 models/
 .git/
-__pycache__/
-*.py[oc]
 
-# Secretos: las variables llegan por entorno, no horneadas
-.env
-.env.*
-!.env.example
+# Bytecode compilado en la máquina de desarrollo
+**/__pycache__/
+**/*.py[cod]
 
-# Datos y artefactos locales
-*.db
-*.sqlite3
-*.wav
-*.mp3
-.DS_Store
+# Secretos: las variables llegan por entorno
+**/.env
+**/.env.*
 
-# No hacen falta en tiempo de ejecución
+# Datos: jamás dentro de una imagen inmutable
+**/*.db
+**/*.sqlite3
+**/*.wav
+**/*.mp3
+**/.DS_Store
+
+# Sin uso en ejecución
 docs/
 sandbox/
