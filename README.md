@@ -20,16 +20,26 @@ graph TD;
 	herramientas(herramientas)
 	clarificar(clarificar)
 	manejar_error(manejar_error)
+	confirmar(confirmar)
+	responder_dato(responder_dato)
+	ejecutar_registro(ejecutar_registro)
 	__end__([<p>__end__</p>]):::last
-	__start__ --> agente;
+	__start__ -.-> agente;
+	__start__ -.-> ejecutar_registro;
 	agente -. &nbsp;fin&nbsp; .-> __end__;
 	agente -.-> herramientas;
 	agente -.-> manejar_error;
+	ejecutar_registro -. &nbsp;fin&nbsp; .-> __end__;
+	ejecutar_registro -.-> manejar_error;
 	herramientas -.-> agente;
 	herramientas -.-> clarificar;
+	herramientas -.-> confirmar;
 	herramientas -.-> manejar_error;
+	herramientas -.-> responder_dato;
 	clarificar --> __end__;
+	confirmar --> __end__;
 	manejar_error --> __end__;
+	responder_dato --> __end__;
 	classDef default fill:#f2f0ff,line-height:1.2
 	classDef first fill-opacity:0
 	classDef last fill:#bfb6fc
@@ -58,7 +68,7 @@ Docker · Langfuse · AWS ECS Fargate · Cloudflare Tunnel
 - [x] **Fase 0** — Fundamentos y entorno
 - [x] **Fase 1** — Servidor MCP con las herramientas del negocio
 - [x] **Fase 2** — Orquestador LangGraph
-- [ ] **Fase 3** — Capa de voz con switch local/nube
+- [x] **Fase 3** — Capa de voz local (el proveedor de nube llega en Fase 4)
 - [ ] **Fase 4** — Despliegue dual (AWS + homelab)
 - [ ] **Fase 5** — Observabilidad, evaluación y documentación
 

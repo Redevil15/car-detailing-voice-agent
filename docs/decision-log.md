@@ -521,3 +521,46 @@ los arreglos anteriores funcionaron. Tres causas concretas.
 siendo el punto débil (media 5.5 s por turno): con el segundo LLM ya eliminado
 donde se podía y el relleno cubriendo los primeros 2 s, lo que queda es
 hardware, y es exactamente lo que ataca el homelab de Fase 4.
+
+---
+
+## ADR-017 — Cierre de Fase 3: la capa de voz, medida
+
+**Fecha:** 2026-09-19 · **Estado:** aceptada
+
+**Qué quedó funcionando.** Llamada completa por voz de punta a punta en la
+Mac: micrófono → Whisper → agente LangGraph → MCP → Piper → bocina, con cita
+creada en la base y confirmación leída al cliente.
+
+**Mediciones de la última llamada real** (6 turnos, cita agendada):
+
+| Etapa | Tiempo |
+|---|---|
+| Whisper `small` (STT) | 0.87 – 1.19 s |
+| Piper (TTS) | 0.16 – 0.28 s |
+| Agente (LLM) | 4.05 – 14.09 s |
+| **Primer audio que oye el cliente** | **2.09 – 2.39 s** (relleno) |
+| Turno de confirmación (sin LLM) | **1.05 s** |
+
+El relleno conversacional es lo que separa "silencio incómodo" de
+"conversación": el cliente oye algo a los ~2 s aunque el modelo tarde 14.
+
+**Lo que decidió el diseño, en orden de impacto.**
+1. Tres decisiones salieron del modelo y se volvieron rutas deterministas:
+   clarificar, confirmar y leer datos completos. Son las más rápidas, las más
+   seguras y las únicas que no pueden inventar una cifra.
+2. El modelo local (qwen3.5:4b con razonamiento) es el 99-100% de la latencia.
+   Las palancas de software se agotaron: la de razonar breve se midió y se
+   descartó, y ya no hay segunda llamada al LLM donde se podía evitar.
+3. Cada fallo de una llamada real se convirtió en escenario o verificación del
+   arnés antes de arreglarse: de 5 escenarios y 35 verificaciones a 8 y 62.
+
+**Lo que NO quedó hecho, y por qué.** `CloudVoiceProvider` sigue sin
+implementarse: Azure exige tarjeta y la voz local no la necesitaba. Pasa a
+Fase 4, donde deja de ser opcional: **ECS Fargate no tiene GPU**, así que el
+despliegue en AWS obliga a tener el proveedor de nube. El switch por variable
+de entorno ya está y la interfaz no cambia.
+
+**Riesgo abierto para Fase 4.** La aceleración por GPU de `ctranslate2` es
+para CUDA; en la 7900XTX puede requerir un build para ROCm o Whisper vía
+PyTorch. No afecta al código detrás de `VoiceProvider`.
