@@ -9,6 +9,7 @@ Requiere el servidor MCP corriendo en el puerto 8000.
 """
 
 import asyncio
+import random
 import time
 import uuid
 
@@ -23,6 +24,14 @@ from voice.fabrica import crear_proveedor_voz
 FRECUENCIA_MIC = 16000  # la que espera Whisper; CoreAudio remuestrea desde 48 kHz
 DURACION_MINIMA = 0.4   # segundos: menos que esto es un Enter doble, no una frase
 UMBRAL_SILENCIO = 200   # pico en int16 (máximo 32767): por debajo no se captó nada
+ESPERA_RELLENO = 1.2    # segundos de silencio tolerables antes de decir algo
+# Varias frases equivalentes: oír siempre la misma cansa al cliente.
+FRASES_RELLENO = (
+    "Permítame un momento, por favor.",
+    "Déjeme revisarlo enseguida.",
+    "Un segundo, por favor.",
+    "Ahora mismo lo consulto.",
+)
 
 
 class Grabadora:
@@ -64,11 +73,27 @@ def pico(audio: Audio) -> int:
     return int(np.abs(muestras.astype(np.int32)).max())
 
 
+async def ejecutar_turno(agente, config: dict, texto: str):
+    """Un turno completo del grafo.
+
+    Separado de main para poder lanzarlo como tarea y reproducir el relleno
+    mientras el modelo trabaja.
+    """
+    ruta: list[str] = []
+    async for paso in agente.astream(entrada_de_turno(texto), config, stream_mode="updates"):
+        ruta.extend(paso.keys())
+    estado = await agente.aget_state(config)
+    return ruta, str(estado.values["messages"][-1].content), estado
+
+
 async def main() -> None:
     ajustes = obtener_ajustes()
     print("Cargando voz y agente...")
     voz = crear_proveedor_voz(ajustes)
     agente = await construir_agente(ajustes)
+    # Los rellenos se sintetizan UNA vez: reproducirlos después cuesta cero.
+    rellenos = [(frase, await voz.synthesize(frase)) for frase in FRASES_RELLENO]
+    ultimo_relleno = -1
     grabadora = Grabadora()
 
     # Un thread_id por ejecución: cada vez que corres el script es una llamada nueva.
@@ -91,31 +116,46 @@ async def main() -> None:
             print("   (no se captó sonido: revisa el permiso de micrófono de tu terminal)")
             continue
 
-        inicio = time.perf_counter()
+        inicio_ciclo = time.perf_counter()
         texto = await voz.transcribe(audio)
-        t_stt = time.perf_counter() - inicio
+        t_stt = time.perf_counter() - inicio_ciclo
         if not texto:
             print("   (se grabó sonido, pero no se reconoció voz)")
             continue
         print(f"CLIENTE: {texto}")
 
+        # El turno corre como tarea para poder hablar mientras el modelo piensa.
         inicio = time.perf_counter()
-        ruta: list[str] = []
-        async for paso in agente.astream(entrada_de_turno(texto), config, stream_mode="updates"):
-            ruta.extend(paso.keys())
-        estado = await agente.aget_state(config)
-        respuesta = str(estado.values["messages"][-1].content)
+        tarea = asyncio.create_task(ejecutar_turno(agente, config, texto))
+        terminadas, _ = await asyncio.wait({tarea}, timeout=ESPERA_RELLENO)
+
+        relleno_usado = not terminadas
+        if relleno_usado:
+            # No baja la latencia real: cambia lo que el cliente percibe. El
+            # audio ya está sintetizado desde el arranque, así que suena al instante.
+            t_primer_audio = time.perf_counter() - inicio_ciclo
+            opciones = [i for i in range(len(rellenos)) if i != ultimo_relleno]
+            ultimo_relleno = random.choice(opciones)  # nunca dos veces seguidas la misma
+            frase, audio_relleno = rellenos[ultimo_relleno]
+            print(f"   [relleno a los {t_primer_audio:.2f}s] {frase}")
+            await asyncio.to_thread(reproducir, audio_relleno)
+
+        ruta, respuesta, estado = await tarea
         t_agente = time.perf_counter() - inicio
 
         inicio = time.perf_counter()
         audio_respuesta = await voz.synthesize(respuesta)
         t_tts = time.perf_counter() - inicio
+        if not relleno_usado:
+            t_primer_audio = time.perf_counter() - inicio_ciclo
 
         print(f"AGENTE: {respuesta}")
         print(
             f"   ruta: {' -> '.join(ruta)}\n"
             f"   STT {t_stt:.2f}s + agente {t_agente:.2f}s + TTS {t_tts:.2f}s"
-            f" = {t_stt + t_agente + t_tts:.2f}s de silencio antes de responder"
+            f" = {t_stt + t_agente + t_tts:.2f}s hasta la respuesta\n"
+            f"   primer audio que oye el cliente: {t_primer_audio:.2f}s"
+            f"{' (relleno)' if relleno_usado else ''}"
         )
         if estado.values.get("fallo_grave"):
             print(f"   FALLO: {estado.values['fallo_grave']}")

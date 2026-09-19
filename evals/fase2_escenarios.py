@@ -221,6 +221,42 @@ def precios_reales() -> Verificacion:
     return verificar
 
 
+_PROMESAS = ("quedo agendada", "queda agendada", "le agendo", "ya quedo", "cita confirmada",
+             "he agendado", "esta agendada", "quedo registrada", "la agende")
+
+
+def no_finge_agendar() -> Verificacion:
+    """Si el agente dice que agendo, el turno DEBE haber pasado por ejecutar_registro.
+
+    Prometer una cita que no existe es el fallo mas caro de este negocio: el
+    cliente llega al taller y no tiene lugar.
+    """
+    def verificar(r: ResultadoTurno):
+        texto = "".join(
+            c for c in unicodedata.normalize("NFD", r.respuesta.lower())
+            if unicodedata.category(c) != "Mn"
+        )
+        promesas = [p for p in _PROMESAS if p in texto]
+        if promesas and "ejecutar_registro" not in r.ruta:
+            return f"dijo que agendo ({promesas}) sin pasar por ejecutar_registro: {r.ruta}"
+        return None
+    return verificar
+
+
+def no_imita_confirmacion() -> Verificacion:
+    """La confirmacion la escribe el grafo, no el modelo.
+
+    Si el modelo redacta "Para confirmar: ..." sin haber llamado a la
+    herramienta, el texto suena igual pero no hay ningun registro armado: el
+    "si" del cliente caeria en el vacio.
+    """
+    def verificar(r: ResultadoTurno):
+        if "para confirmar:" in r.respuesta.lower() and "confirmar" not in r.ruta:
+            return f"imito la confirmacion del sistema sin armar el registro: {r.ruta}"
+        return None
+    return verificar
+
+
 def todas(*verificaciones: Verificacion) -> Verificacion:
     # Reporta TODOS los motivos, no solo el primero: con cortocircuito, el tuteo
     # ocultó que en el mismo turno el modelo había inventado una duración.
@@ -306,6 +342,10 @@ async def correr_turno(grafo, config: dict, frase: str) -> ResultadoTurno:
 VERIFICACIONES_GLOBALES: tuple[Verificacion, ...] = (
     # El razonamiento interno de un modelo nunca debe llegar al TTS.
     no_menciona("<think>", "</think>"),
+    # Nunca prometer una cita que no se creo.
+    no_finge_agendar(),
+    # Ni fingir la confirmacion del sistema.
+    no_imita_confirmacion(),
     # Ningún precio fuera del catálogo, en ningún turno.
     precios_reales(),
 )
@@ -316,6 +356,14 @@ def construir_escenarios() -> list[Escenario]:
     dia_cita = fecha_con_cupo("11:00")
     dia_correccion = fecha_con_cupo_en("11:00", "13:00")
     return [
+        Escenario("Termino generico del negocio", [
+            ("¿Cuánto cuesta el detallado?",
+             todas(
+                 llamo("listar_servicios"),
+                 no_menciona("no lo manejamos"),
+                 menciona("lavado", "encerado", "pulido", "interiores", "cerámico"),
+             )),
+        ]),
         Escenario("Precio directo", [
             ("¿Cuánto cuesta el encerado?",
              todas(llamo("consultar_precio"), menciona("1200", "1,200", "mil doscientos"),

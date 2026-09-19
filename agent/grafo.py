@@ -48,6 +48,7 @@ class EstadoAgente(TypedDict):
     motivo_aclaracion: str | None  # 'ambiguo' o 'sin_coincidencia': lo declara la tool
     avisos_llm: list[str]  # errores del modelo principal cuando respondió el respaldo
     dato_para_responder: dict[str, Any] | None  # resultado de tool listo para leer sin LLM
+    contexto_registro: bool  # el turno viene de una confirmación pendiente
     errores_de_tool: int
     fallo_grave: str | None
 
@@ -64,6 +65,7 @@ def entrada_de_turno(texto: str) -> dict[str, Any]:
         "motivo_aclaracion": None,
         "avisos_llm": [],
         "dato_para_responder": None,
+        "contexto_registro": False,
         "errores_de_tool": 0,
         "fallo_grave": None,
     }
@@ -83,11 +85,15 @@ def _prompt_sistema() -> str:
         "las lee letra por letra. "
         "Usa las herramientas para cualquier precio o disponibilidad y nunca "
         "inventes datos. Si preguntan qué servicios hay, menciona dos o tres por "
-        "su nombre y precio, y ofrezca contar más. "
+        "su nombre y precio, y ofrezca contar más. Si usan un término genérico "
+        "como detallado, servicio o limpieza sin nombrar uno del catálogo, usa "
+        "listar_servicios en vez de consultar_precio. "
         "Para agendar necesitas nombre, teléfono, servicio, fecha y hora. Revisa "
         "toda la conversación y nunca vuelvas a pedir un dato que el cliente ya "
         "dio: pide solo lo que falte. Cuando tengas los cinco, llama a "
-        "registrar_servicio sin pedir confirmación: el sistema se la pide al cliente."
+        "registrar_servicio sin pedir confirmación: el sistema se la pide al cliente. "
+        "Nunca escribas tú una confirmación ni digas que agendaste algo: eso solo "
+        "lo hace el sistema después de llamar a la herramienta."
     )
 
 
@@ -170,8 +176,15 @@ def _dato_leible(nombre: str, datos: "dict[str, Any] | None") -> bool:
 
 
 def telefono_hablado(telefono: str) -> str:
-    """'55 1234 5678' -> '55, 12, 34, 56, 78': en pares, como se dicta en México."""
-    digitos = re.sub(r"\D", "", str(telefono))
+    """Respeta la agrupación que dictó el cliente: '722-681-0775' -> '722, 681, 0775'.
+
+    Agrupar a ciegas de dos en dos rompía los bloques naturales del número y se
+    leía como '72, 26, 81, 07, 75', que es difícil de verificar al teléfono.
+    """
+    grupos = re.findall(r"\d+", str(telefono))
+    if len(grupos) > 1:
+        return ", ".join(grupos)
+    digitos = grupos[0] if grupos else ""
     if len(digitos) == 10:
         return ", ".join(digitos[i:i + 2] for i in range(0, 10, 2))
     return " ".join(digitos) or str(telefono)
@@ -218,6 +231,32 @@ def ruta_tras_agente(estado: EstadoAgente) -> Literal["herramientas", "manejar_e
     return "herramientas" if getattr(ultimo, "tool_calls", None) else "fin"
 
 
+# Raices, no palabras completas: "agendamelo", "agendeme" y "agendar" cuentan
+# igual. Comparar palabras exactas dejaba fuera media docena de variantes.
+_RAICES_RESERVA = ("agend", "apart", "reserv", "apunt", "anot", "cita")
+
+
+def pide_reservar(texto: str) -> bool:
+    """¿El cliente está pidiendo una reserva, no solo preguntando?
+
+    Cuando pide agendar, la respuesta la redacta el modelo: el nodo determinista
+    contestaría con la lista de horarios y cortaría el turno antes de que el
+    modelo propusiera el registro.
+    """
+    sin_acentos = "".join(
+        c for c in unicodedata.normalize("NFD", texto.lower()) if unicodedata.category(c) != "Mn"
+    )
+    palabras = re.findall(r"[a-z]+", sin_acentos)
+    return any(palabra.startswith(_RAICES_RESERVA) for palabra in palabras)
+
+
+def _ultimo_del_cliente(estado: "EstadoAgente") -> str:
+    for mensaje in reversed(estado["messages"]):
+        if mensaje.type == "human":
+            return str(mensaje.content)
+    return ""
+
+
 def ruta_inicio(estado: EstadoAgente) -> Literal["ejecutar_registro", "agente"]:
     """Si hay un registro esperando y el cliente acaba de aceptar, se agenda sin LLM."""
     if estado.get("registro_pendiente") and es_afirmacion(str(estado["messages"][-1].content)):
@@ -234,7 +273,14 @@ def ruta_tras_herramientas(
         return "clarificar"  # un servicio ambiguo se aclara antes de confirmar nada
     if estado.get("registro_pendiente"):
         return "confirmar"
-    if estado.get("dato_para_responder"):
+    # En medio de una reserva la respuesta la redacta el modelo: el nodo
+    # determinista no sabe qué hora pidió el cliente y contestaría con una lista
+    # de horarios sin decirle que la que pidió no estaba libre.
+    if (
+        estado.get("dato_para_responder")
+        and not estado.get("contexto_registro")
+        and not pide_reservar(_ultimo_del_cliente(estado))
+    ):
         return "responder_dato"
     return "agente"
 
@@ -369,6 +415,8 @@ async def construir_agente(ajustes: Ajustes, checkpointer=None):
             "messages": [respuesta],
             "avisos_llm": estado.get("avisos_llm", []) + errores,
             "registro_pendiente": None,
+            # Se recuerda durante el turno que veníamos de una confirmación.
+            "contexto_registro": estado.get("contexto_registro") or bool(estado.get("registro_pendiente")),
         }
 
     async def herramientas(estado: EstadoAgente) -> dict[str, Any]:

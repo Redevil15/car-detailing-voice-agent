@@ -18,6 +18,16 @@ DESCARGA_WHISPER = (
 DESCARGA_PIPER = "uv run python -m piper.download_voices es_MX-claude-high --download-dir models/piper"
 
 
+# Sesga a Whisper con el vocabulario del taller: sin esto confundía palabras
+# del dominio ("mejor" se transcribió como "M-Mentos").
+VOCABULARIO = (
+    "Taller de car detailing. Servicios: lavado básico, lavado premium, encerado, "
+    "pulido completo, limpieza de interiores, descontaminación de pintura, "
+    "tratamiento cerámico. El cliente pregunta precios, revisa disponibilidad "
+    "y agenda una cita."
+)
+
+
 class LocalVoiceProvider(VoiceProvider):
     nombre = "local"
 
@@ -50,6 +60,7 @@ class LocalVoiceProvider(VoiceProvider):
     def _transcribir(self, audio: Audio) -> str:
         segmentos, _ = self._stt.transcribe(
             io.BytesIO(audio.a_wav()),  # Whisper remuestrea el WAV a 16 kHz por dentro
+            initial_prompt=VOCABULARIO,  # vocabulario del negocio
             language="es",              # fijarlo evita perder tiempo detectando idioma
             beam_size=1,                # decodificación greedy: con small ya fue exacta
             vad_filter=True,            # recorta silencios y evita texto inventado

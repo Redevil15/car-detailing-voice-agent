@@ -446,3 +446,45 @@ Calidad sin cambios: 7/7 escenarios y 35/35 verificaciones.
 - Queda una sola llamada al LLM por turno en los casos frecuentes; el trabajo
   de latencia que sigue es reducir el razonamiento de esa llamada, reproducir
   por frases mientras el modelo escribe, y el hardware del homelab.
+
+---
+
+## ADR-015 — Correcciones salidas de la primera llamada real
+
+**Fecha:** 2026-09-19 · **Estado:** aceptada
+
+**Contexto.** La primera conversación por voz de punta a punta (cita agendada,
+folio 91) reveló fallos que ninguna prueba automatizada había detectado.
+
+**Fallos observados y su arreglo.**
+
+| Observado en la llamada | Arreglo |
+|---|---|
+| "¿Cuánto cuesta el detallado?" → "ese servicio no lo manejamos" | Regla en el prompt: un término genérico va a listar_servicios |
+| El teléfono 722-681-0775 se leyó "72, 26, 81, 07, 75" | telefono_hablado respeta la agrupación dictada |
+| Pidió la una de la tarde y el agente listó horarios sin decir que no había | Sin respuesta determinista cuando el turno viene de una confirmación |
+| Pidió agendar con todos los datos y el nodo determinista cortó el turno | Sin respuesta determinista cuando el cliente pide reservar |
+| Whisper transcribió "mejor" como "M-Mentos" | initial_prompt con el vocabulario del taller |
+| El relleno repetía siempre la misma frase | Cuatro frases equivalentes, nunca dos veces seguidas |
+
+**Dos fallos más graves, detectados por el arnés al corregir los anteriores.**
+- El modelo dijo "le agendo la cita" **sin llamar a la herramienta**: prometer
+  una cita inexistente es el peor fallo posible aquí.
+- El modelo **imitó el texto de confirmación del sistema** sin armar el
+  registro: suena idéntico, pero el "sí" del cliente caería en el vacío.
+
+Ambos se atacan por dos vías: una prohibición explícita en el prompt y dos
+verificaciones globales del arnés (`no_finge_agendar`, `no_imita_confirmacion`)
+que se aplican a todos los turnos de todos los escenarios.
+
+**Método que se consolida.** Cada fallo observado en una llamada real se
+convierte en escenario o verificación del arnés antes de arreglarlo. El arnés
+pasó de 5 a 8 escenarios y de 35 a 62 verificaciones.
+
+**Consecuencias.** 8/8 escenarios y 62/62 verificaciones. La respuesta
+determinista se limita a consultas puras: las peticiones de reserva y los
+turnos en medio de una confirmación vuelven al modelo, que tiene el contexto.
+
+**Nota de método.** Las latencias solo son comparables con la máquina en
+condiciones similares: una corrida con el escritorio ocupado (carga 6.7) dobló
+todos los tiempos, incluidos los de rutas que no pasan por el LLM.
