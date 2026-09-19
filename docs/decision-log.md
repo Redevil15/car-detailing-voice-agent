@@ -405,3 +405,44 @@ hace DOS llamadas al modelo: decidir la tool y redactar la respuesta.
   frases mientras el modelo escribe, y el homelab de Fase 4.
 - Una corrida por configuración (n=1): sirve para descartar comportamientos,
   no para declarar diferencias pequeñas.
+
+---
+
+## ADR-014 — Respuesta determinista para datos completos de tools
+
+**Fecha:** 2026-09-19 · **Estado:** aceptada
+
+**Contexto.** Con qwen3.5:4b el turno medio costaba 6.1 s, y el desglose mostró
+que el LLM era el 99-100% (MCP 10-55 ms, grafo ~10 ms). Cada turno con
+herramienta hacía DOS llamadas al modelo: decidir la tool y redactar el
+resultado. La segunda solo ponía en palabras un dato que el sistema ya tenía.
+
+**Decisión.** Un nodo determinista `responder_dato` lee el resultado cuando la
+tool devolvió un dato completo y fue la única herramienta del turno: un precio
+encontrado, o una fecha abierta con horarios libres. El LLM sigue decidiendo
+QUÉ herramienta usar. Los casos no felices (ambigüedad, fecha inválida, día
+lleno, varias tools) siguen pasando por el modelo o por clarificar.
+
+**Medición** (mismo arnés, qwen3.5:4b, modelo ya cargado):
+
+| Turno | Antes | Después |
+|---|---|---|
+| Consulta de precio | 4.19 s | 2.42 s |
+| Disponibilidad | 6.69 s | 3.38 s |
+| Media del arnés | 6.11 s | 4.90 s |
+
+Calidad sin cambios: 7/7 escenarios y 35/35 verificaciones.
+
+**Alternativas descartadas.**
+- Dejar que el LLM redacte siempre: más natural, pero cuesta 1.85-3.37 s por
+  turno y permite inventar el número, cosa ya observada en tres modelos.
+- Plantillas para todos los resultados: un día lleno o una fecha inválida
+  necesitan matices que el modelo maneja mejor.
+
+**Consecuencias.**
+- Precio y disponibilidad suenan siempre igual. Es el costo aceptado: en esas
+  dos respuestas el dato importa más que la variedad.
+- Las cifras habladas salen del dato real, no de tokens generados.
+- Queda una sola llamada al LLM por turno en los casos frecuentes; el trabajo
+  de latencia que sigue es reducir el razonamiento de esa llamada, reproducir
+  por frases mientras el modelo escribe, y el hardware del homelab.

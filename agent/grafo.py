@@ -47,6 +47,7 @@ class EstadoAgente(TypedDict):
     sugerencias: list[str]
     motivo_aclaracion: str | None  # 'ambiguo' o 'sin_coincidencia': lo declara la tool
     avisos_llm: list[str]  # errores del modelo principal cuando respondió el respaldo
+    dato_para_responder: dict[str, Any] | None  # resultado de tool listo para leer sin LLM
     errores_de_tool: int
     fallo_grave: str | None
 
@@ -62,6 +63,7 @@ def entrada_de_turno(texto: str) -> dict[str, Any]:
         "sugerencias": [],
         "motivo_aclaracion": None,
         "avisos_llm": [],
+        "dato_para_responder": None,
         "errores_de_tool": 0,
         "fallo_grave": None,
     }
@@ -141,6 +143,32 @@ def hora_hablada(hhmm: str) -> str:
     return f"{articulo} {_HORAS[doce]}{extra} {periodo}"
 
 
+def duracion_hablada(minutos: int) -> str:
+    """90 -> 'una hora y media'; 120 -> 'dos horas'; 45 -> '45 minutos'."""
+    if minutos < 60:
+        return f"{minutos} minutos"
+    horas, resto = divmod(minutos, 60)
+    nombre = "una hora" if horas == 1 else f"{_HORAS[horas] if horas <= 12 else horas} horas"
+    if resto == 0:
+        return nombre
+    return f"{nombre} y media" if resto == 30 else f"{nombre} y {resto} minutos"
+
+
+def _dato_leible(nombre: str, datos: "dict[str, Any] | None") -> bool:
+    """¿La tool devolvió un dato completo, que se puede leer sin el LLM?
+
+    Solo los casos felices. Una fecha inválida, un día lleno o un servicio
+    ambiguo siguen necesitando que el modelo redacte o que el grafo aclare.
+    """
+    if not datos:
+        return False
+    if nombre == "consultar_precio":
+        return bool(datos.get("encontrado"))
+    if nombre == "checar_disponibilidad":
+        return bool(datos.get("abierto")) and bool(datos.get("horas_libres"))
+    return False
+
+
 def telefono_hablado(telefono: str) -> str:
     """'55 1234 5678' -> '55, 12, 34, 56, 78': en pares, como se dicta en México."""
     digitos = re.sub(r"\D", "", str(telefono))
@@ -199,13 +227,15 @@ def ruta_inicio(estado: EstadoAgente) -> Literal["ejecutar_registro", "agente"]:
 
 def ruta_tras_herramientas(
     estado: EstadoAgente,
-) -> Literal["agente", "clarificar", "confirmar", "manejar_error"]:
+) -> Literal["agente", "clarificar", "confirmar", "responder_dato", "manejar_error"]:
     if estado.get("fallo_grave") or estado["errores_de_tool"] > MAX_ERRORES_DE_TOOL:
         return "manejar_error"
     if estado["sugerencias"]:
         return "clarificar"  # un servicio ambiguo se aclara antes de confirmar nada
     if estado.get("registro_pendiente"):
         return "confirmar"
+    if estado.get("dato_para_responder"):
+        return "responder_dato"
     return "agente"
 
 
@@ -225,6 +255,29 @@ def clarificar(estado: EstadoAgente) -> dict[str, Any]:
     else:
         texto = f"Tenemos {_enumerar(opciones)}. ¿Cuál le interesa?"
     return {"messages": [AIMessage(texto)], "registro_pendiente": None}
+
+
+def responder_dato(estado: EstadoAgente) -> dict[str, Any]:
+    """Lee un dato que la tool ya devolvió completo, sin pasar por el LLM.
+
+    Ahorra la segunda llamada al modelo del turno (medida entre 1.85 s y
+    3.37 s) y elimina la posibilidad de que invente el número. El LLM sigue
+    decidiendo QUÉ herramienta usar; deja de redactar lo que ya es un hecho.
+    """
+    dato = estado["dato_para_responder"]
+    datos = dato["datos"]
+    if dato["tool"] == "consultar_precio":
+        texto = (
+            f"El {datos['servicio'].lower()} cuesta {datos['precio_mxn']} pesos y dura "
+            f"{duracion_hablada(datos['duracion_min'])}. ¿Le gustaría agendarlo?"
+        )
+    else:
+        horas = [hora_hablada(h) for h in datos["horas_libres"][:3]]
+        texto = (
+            f"Sí, {fecha_hablada(datos['fecha'])} tenemos lugar a {_enumerar(horas)}. "
+            "¿Cuál horario le acomoda?"
+        )
+    return {"messages": [AIMessage(texto)]}
 
 
 def manejar_error(estado: EstadoAgente) -> dict[str, Any]:
@@ -323,6 +376,7 @@ async def construir_agente(ajustes: Ajustes, checkpointer=None):
         mensajes: list[ToolMessage] = []
         sugerencias: list[str] = []
         motivo_aclaracion: str | None = None
+        dato: dict[str, Any] | None = None
         errores = estado["errores_de_tool"]
         fallo = None
         pendiente: dict[str, Any] | None = None
@@ -377,11 +431,15 @@ async def construir_agente(ajustes: Ajustes, checkpointer=None):
             elif llamada["name"] == "consultar_precio" and not resultado.datos.get("encontrado"):
                 sugerencias = resultado.datos.get("sugerencias", [])
                 motivo_aclaracion = resultado.datos.get("motivo")
+            elif len(ultimo.tool_calls) == 1 and _dato_leible(llamada["name"], resultado.datos):
+                # Única tool del turno y con dato completo: lo lee el grafo.
+                dato = {"tool": llamada["name"], "datos": resultado.datos}
 
         return {
             "messages": mensajes,
             "sugerencias": sugerencias,
             "motivo_aclaracion": motivo_aclaracion,
+            "dato_para_responder": dato,
             "registro_pendiente": pendiente,
             "errores_de_tool": errores,
             "fallo_grave": fallo,
@@ -409,6 +467,7 @@ async def construir_agente(ajustes: Ajustes, checkpointer=None):
     grafo.add_node("clarificar", clarificar)
     grafo.add_node("manejar_error", manejar_error)
     grafo.add_node("confirmar", confirmar)
+    grafo.add_node("responder_dato", responder_dato)
     grafo.add_node("ejecutar_registro", ejecutar_registro)
 
     grafo.add_conditional_edges(
@@ -422,7 +481,7 @@ async def construir_agente(ajustes: Ajustes, checkpointer=None):
     grafo.add_conditional_edges(
         "herramientas", ruta_tras_herramientas,
         {"agente": "agente", "clarificar": "clarificar", "confirmar": "confirmar",
-         "manejar_error": "manejar_error"},
+         "responder_dato": "responder_dato", "manejar_error": "manejar_error"},
     )
     grafo.add_conditional_edges(
         "ejecutar_registro", ruta_tras_registro,
@@ -430,6 +489,7 @@ async def construir_agente(ajustes: Ajustes, checkpointer=None):
     )
     grafo.add_edge("clarificar", END)
     grafo.add_edge("confirmar", END)
+    grafo.add_edge("responder_dato", END)
     grafo.add_edge("manejar_error", END)
 
     return grafo.compile(checkpointer=checkpointer or InMemorySaver())
