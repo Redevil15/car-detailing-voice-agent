@@ -1,0 +1,22 @@
+# Lo que nunca debe entrar a la imagen
+.venv/
+models/
+.git/
+__pycache__/
+*.py[oc]
+
+# Secretos: las variables llegan por entorno, no horneadas
+.env
+.env.*
+!.env.example
+
+# Datos y artefactos locales
+*.db
+*.sqlite3
+*.wav
+*.mp3
+.DS_Store
+
+# No hacen falta en tiempo de ejecución
+docs/
+sandbox/

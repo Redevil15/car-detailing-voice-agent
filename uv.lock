@@ -79,12 +79,13 @@ source = { editable = "." }
 dependencies = [
     { name = "langchain-openai" },
     { name = "langgraph" },
-    { name = "mcp", extra = ["cli"] },
+    { name = "mcp" },
     { name = "python-dotenv" },
 ]
 
 [package.dev-dependencies]
 dev = [
+    { name = "mcp", extra = ["cli"] },
     { name = "sounddevice" },
 ]
 voz-local = [
@@ -96,12 +97,15 @@ voz-local = [
 requires-dist = [
     { name = "langchain-openai", specifier = ">=1.6.0" },
     { name = "langgraph", specifier = ">=1.2.11" },
-    { name = "mcp", extras = ["cli"], specifier = ">=2.1.1" },
+    { name = "mcp", specifier = ">=2.1.1" },
     { name = "python-dotenv", specifier = ">=1.2.3" },
 ]
 
 [package.metadata.requires-dev]
-dev = [{ name = "sounddevice", specifier = ">=0.5.6" }]
+dev = [
+    { name = "mcp", extras = ["cli"], specifier = ">=2.1.1" },
+    { name = "sounddevice", specifier = ">=0.5.6" },
+]
 voz-local = [
     { name = "faster-whisper", specifier = ">=1.2.1" },
     { name = "piper-tts", specifier = ">=1.8.0" },
