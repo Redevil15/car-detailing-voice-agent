@@ -49,6 +49,7 @@ class EstadoAgente(TypedDict):
     avisos_llm: list[str]  # errores del modelo principal cuando respondió el respaldo
     dato_para_responder: dict[str, Any] | None  # resultado de tool listo para leer sin LLM
     contexto_registro: bool  # el turno viene de una confirmación pendiente
+    consulta_servicio: str  # lo que se buscó cuando no hubo coincidencia
     errores_de_tool: int
     fallo_grave: str | None
 
@@ -66,6 +67,7 @@ def entrada_de_turno(texto: str) -> dict[str, Any]:
         "avisos_llm": [],
         "dato_para_responder": None,
         "contexto_registro": False,
+        "consulta_servicio": "",
         "errores_de_tool": 0,
         "fallo_grave": None,
     }
@@ -82,7 +84,8 @@ def _prompt_sistema() -> str:
         "ni formato. Si hay muchos horarios libres, menciona solo dos o tres. "
         "Di los precios en pesos y con palabras que suenen bien habladas: nunca "
         "uses abreviaturas como MXN ni símbolos, porque un sintetizador de voz "
-        "las lee letra por letra. "
+        "las lee letra por letra. Di las fechas con palabras (el lunes 21 de "
+        "septiembre), nunca en formato numérico como 2026-09-21. "
         "Usa las herramientas para cualquier precio o disponibilidad y nunca "
         "inventes datos. Si preguntan qué servicios hay, menciona dos o tres por "
         "su nombre y precio, y ofrezca contar más. Si usan un término genérico "
@@ -250,11 +253,43 @@ def pide_reservar(texto: str) -> bool:
     return any(palabra.startswith(_RAICES_RESERVA) for palabra in palabras)
 
 
-def _ultimo_del_cliente(estado: "EstadoAgente") -> str:
-    for mensaje in reversed(estado["messages"]):
-        if mensaje.type == "human":
-            return str(mensaje.content)
-    return ""
+MENSAJES_DE_CONTEXTO = 3
+
+
+def _voz_del_cliente(estado: "EstadoAgente", cuantos: int = MENSAJES_DE_CONTEXTO) -> str:
+    """Los últimos mensajes del cliente, juntos.
+
+    Mirar solo el último no basta: quien dice "quiero agendar un encerado" y en
+    el turno siguiente dicta su nombre sigue estando en una reserva, aunque esa
+    frase no contenga ninguna palabra de reserva.
+    """
+    dichos = [str(m.content) for m in estado["messages"] if m.type == "human"]
+    return " ".join(dichos[-cuantos:])
+
+
+_PALABRAS_TIEMPO = ("hora", "horas", "manana", "tarde", "noche", "mediodia", "am", "pm",
+                    "lunes", "martes", "miercoles", "jueves", "viernes", "sabado", "domingo",
+                    "hoy", "ayer", "proximo", "proxima", "semana", "dia", "dias", "entre")
+_ARTICULOS = {"el", "la", "los", "las", "de", "del", "a", "al", "en", "y", "o",
+              "un", "una", "para", "por", "con", "mi", "su"}
+
+
+def parece_servicio(texto: str) -> bool:
+    """¿Lo que se buscó parece el nombre de un servicio?
+
+    El modelo llegó a llamar consultar_precio con "las 9 de la mañana", y el
+    grafo contestaba "ese servicio no lo manejamos", que suena absurdo. Si el
+    texto es una hora o una fecha, lo correcto es pedir que lo repita.
+    """
+    limpio = "".join(
+        c for c in unicodedata.normalize("NFD", str(texto).lower()) if unicodedata.category(c) != "Mn"
+    ).strip()
+    if not limpio or any(c.isdigit() for c in limpio):
+        return False
+    palabras = set(re.findall(r"[a-z]+", limpio))
+    if not palabras:
+        return False
+    return not palabras <= (set(_PALABRAS_TIEMPO) | _ARTICULOS)
 
 
 def ruta_inicio(estado: EstadoAgente) -> Literal["ejecutar_registro", "agente"]:
@@ -279,7 +314,7 @@ def ruta_tras_herramientas(
     if (
         estado.get("dato_para_responder")
         and not estado.get("contexto_registro")
-        and not pide_reservar(_ultimo_del_cliente(estado))
+        and not pide_reservar(_voz_del_cliente(estado))
     ):
         return "responder_dato"
     return "agente"
@@ -297,7 +332,12 @@ def clarificar(estado: EstadoAgente) -> dict[str, Any]:
     # y "¿qué servicios tienen?" acababa en "ese servicio no lo manejamos".
     if estado.get("motivo_aclaracion") == "sin_coincidencia":
         # Leer el catálogo completo por teléfono sería eterno: se ofrecen tres.
-        texto = f"Ese servicio no lo manejamos. Tenemos, por ejemplo, {_enumerar(opciones[:3])}. ¿Le interesa alguno?"
+        if parece_servicio(estado.get("consulta_servicio", "")):
+            texto = f"Ese servicio no lo manejamos. Tenemos, por ejemplo, {_enumerar(opciones[:3])}. ¿Le interesa alguno?"
+        else:
+            # Lo consultado no era un servicio (una hora, una fecha): no tiene
+            # sentido decir que "no lo manejamos".
+            texto = f"No me quedó claro qué servicio necesita. Tenemos, por ejemplo, {_enumerar(opciones[:3])}. ¿Cuál le interesa?"
     else:
         texto = f"Tenemos {_enumerar(opciones)}. ¿Cuál le interesa?"
     return {"messages": [AIMessage(texto)], "registro_pendiente": None}
@@ -424,6 +464,7 @@ async def construir_agente(ajustes: Ajustes, checkpointer=None):
         mensajes: list[ToolMessage] = []
         sugerencias: list[str] = []
         motivo_aclaracion: str | None = None
+        consulta: str = ""
         dato: dict[str, Any] | None = None
         errores = estado["errores_de_tool"]
         fallo = None
@@ -479,6 +520,7 @@ async def construir_agente(ajustes: Ajustes, checkpointer=None):
             elif llamada["name"] == "consultar_precio" and not resultado.datos.get("encontrado"):
                 sugerencias = resultado.datos.get("sugerencias", [])
                 motivo_aclaracion = resultado.datos.get("motivo")
+                consulta = str(llamada["args"].get("servicio", ""))
             elif len(ultimo.tool_calls) == 1 and _dato_leible(llamada["name"], resultado.datos):
                 # Única tool del turno y con dato completo: lo lee el grafo.
                 dato = {"tool": llamada["name"], "datos": resultado.datos}
@@ -487,6 +529,7 @@ async def construir_agente(ajustes: Ajustes, checkpointer=None):
             "messages": mensajes,
             "sugerencias": sugerencias,
             "motivo_aclaracion": motivo_aclaracion,
+            "consulta_servicio": consulta,
             "dato_para_responder": dato,
             "registro_pendiente": pendiente,
             "errores_de_tool": errores,

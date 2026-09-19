@@ -6,6 +6,7 @@ dispositivo; el agente no cambia.
 
 import asyncio
 import io
+import unicodedata
 from pathlib import Path
 
 from voice.audio import Audio
@@ -26,6 +27,24 @@ VOCABULARIO = (
     "tratamiento cerámico. El cliente pregunta precios, revisa disponibilidad "
     "y agenda una cita."
 )
+
+
+# Whisper inventa frases típicas de YouTube cuando el audio es corto o bajito:
+# es su modo de fallo más conocido. En una llamada, "¡Suscríbete!" se coló como
+# si el cliente lo hubiera dicho.
+_ALUCINACIONES = ("suscribete", "suscribanse", "gracias por ver", "subtitulos",
+                  "subtitulado", "amara.org", "www.", ".com", "no olvides",
+                  "comenta y comparte", "hasta la proxima")
+DURACION_MINIMA_AUDIO = 0.4  # segundos
+
+
+def _es_alucinacion(texto: str) -> bool:
+    limpio = "".join(
+        c for c in unicodedata.normalize("NFD", texto.lower()) if unicodedata.category(c) != "Mn"
+    )
+    if len(limpio) > 80:  # una frase larga y real no es una de estas muletillas
+        return False
+    return any(marca in limpio for marca in _ALUCINACIONES)
 
 
 class LocalVoiceProvider(VoiceProvider):
@@ -58,6 +77,8 @@ class LocalVoiceProvider(VoiceProvider):
         return await asyncio.to_thread(self._sintetizar, texto)
 
     def _transcribir(self, audio: Audio) -> str:
+        if audio.duracion < DURACION_MINIMA_AUDIO:
+            return ""  # demasiado corto para contener una frase
         segmentos, _ = self._stt.transcribe(
             io.BytesIO(audio.a_wav()),  # Whisper remuestrea el WAV a 16 kHz por dentro
             initial_prompt=VOCABULARIO,  # vocabulario del negocio
@@ -66,7 +87,8 @@ class LocalVoiceProvider(VoiceProvider):
             vad_filter=True,            # recorta silencios y evita texto inventado
         )
         # Los segmentos son un generador perezoso: la transcripción ocurre aquí.
-        return " ".join(s.text.strip() for s in segmentos).strip()
+        texto = " ".join(s.text.strip() for s in segmentos).strip()
+        return "" if _es_alucinacion(texto) else texto
 
     def _sintetizar(self, texto: str) -> Audio:
         if not texto.strip():

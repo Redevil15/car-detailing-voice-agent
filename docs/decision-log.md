@@ -488,3 +488,36 @@ turnos en medio de una confirmación vuelven al modelo, que tiene el contexto.
 **Nota de método.** Las latencias solo son comparables con la máquina en
 condiciones similares: una corrida con el escritorio ocupado (carga 6.7) dobló
 todos los tiempos, incluidos los de rutas que no pasan por el LLM.
+
+---
+
+## ADR-016 — Calidad de voz: aclaración con contexto, fechas habladas y alucinaciones de Whisper
+
+**Fecha:** 2026-09-19 · **Estado:** aceptada
+
+**Contexto.** La segunda llamada real se sintió peor que la primera pese a que
+los arreglos anteriores funcionaron. Tres causas concretas.
+
+**Decisiones.**
+
+1. **`clarificar` distingue dos casos.** El modelo llamó a `consultar_precio`
+   con "las 9 de la mañana" y el agente respondió "ese servicio no lo
+   manejamos". Ahora, si lo consultado no parece un nombre de servicio (tiene
+   dígitos o solo palabras de tiempo), el texto es "no me quedó claro qué
+   servicio necesita".
+2. **Fechas en palabras.** El agente dijo "el próximo lunes 2026-09-21" en voz
+   alta. Regla explícita en el prompt: nunca formato numérico.
+3. **Filtro de alucinaciones de Whisper.** Con audio corto o bajito, Whisper
+   produce frases de YouTube: transcribió "¡Suscríbete!" cuando el cliente dijo
+   "sí, es correcto". Se descarta el audio de menos de 0.4 s y las frases
+   conocidas ("suscríbete", "gracias por ver", "subtítulos...").
+4. **Ventana de intención de reserva.** La regla que evita la respuesta
+   determinista miraba solo el último mensaje, y "Me llamo Ramona Pérez y mi
+   teléfono es..." no contiene ninguna palabra de reserva: el nodo determinista
+   secuestraba un turno en medio de una cita. Ahora mira los últimos tres
+   mensajes del cliente.
+
+**Consecuencias.** 8/8 escenarios y 62/62 verificaciones. La latencia sigue
+siendo el punto débil (media 5.5 s por turno): con el segundo LLM ya eliminado
+donde se podía y el relleno cubriendo los primeros 2 s, lo que queda es
+hardware, y es exactamente lo que ataca el homelab de Fase 4.
